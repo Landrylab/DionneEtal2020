@@ -1,0 +1,37 @@
+# paths
+# 1. path to output folder
+prjd: data_analysed
+# 2. path to file containing barcode indices to barcode sequence mappings (fasta) 
+bc2seqp: indexes.fa
+# 3. sample-wise barcode arrangement (tsv)
+dbarcodesp: dbarcodes.tsv
+# 4. library oligo sequences (fasta)
+oligo2seqp: universal_amplicon.fa
+# 5. reference sequence/s (fasta)
+referencep: targets.fa
+
+# sequencing related parameters
+# read length of the sequences.
+read length: 300
+
+# demutiplexing related parameters
+# barcode alignment score cutoff minimum 
+alignment_score_coff: 34
+# locations of the library oligos
+primer start: 5
+# before the target starts
+target spacer 5prime: 18 
+# after the end of the target
+cut target spacer: True
+target spacer 3prime: 17 
+primer end: 65
+barcode_poss: [[5,14],[36,45]]
+
+# alignment related parameters
+alignment method: global
+# mutation call cutoff minimum
+readdepth_coff_min: 3
+
+# multiprocessing related parameters
+cores: 6
+chunksize: 100000
