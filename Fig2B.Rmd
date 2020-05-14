@@ -1,0 +1,708 @@
+---
+title: "SH3_interactions"
+output: html_document
+---
+
+Code to parse SH3 PWMs and sequences of interactors
+
+```{r setup, include=FALSE}
+
+# Script to analyse PCA data
+
+library(readr)
+library(readxl)
+library(seqinr)
+
+sh3_pca <- read_csv('PCAOct18_SH3Interactions_0120Analysis.csv', skip=0, col_names=TRUE)
+
+# Obtain the AA sequence of all proteins that interact with SH3
+
+interactors_ids <- unique(unlist(sh3_pca[,2]))
+interactors_ids <- gsub('YFR024CA','YFR024C-A',interactors_ids)
+interactors_ids <- gsub('^YFR024C$','YFR024C-A',interactors_ids)
+interactors_ids <- unique(interactors_ids)
+
+# Write the IDs of the interactors out into a text file
+
+write.table(interactors_ids,file='sh3_interactors_lost_pca_updated.txt',col.names=FALSE, row.names=FALSE, quote=FALSE)
+
+# Sequences were retrieved using 'Retrieve/ID mapping' tool in UniProt (Ensembl Genomes -> UniProtKB):
+# https://www.uniprot.org/uploadlists/
+
+interactors_fasta <- read.fasta('sh3_stuffed_lost_updated.fasta',seqtype='AA')
+interactors_seq <- getSequence(interactors_fasta)
+
+#For sequence name, combine accession, gene name, and systematic name:
+
+accession <- rapply(strsplit(names(interactors_fasta),split='\\|'), function (x) x[2])
+gene_name <- rapply(strsplit(rapply(strsplit(unlist(getAnnot(interactors_fasta)),split='GN='), function (x) x[2]),split=' '),function(x) x[1])
+interactors_name <- paste(interactors_ids,accession,gene_name,sep='_')
+names(interactors_seq) <- interactors_name
+
+# Repeat the same procedure but now for interactors that do not change upon SH3 domain stuffing
+
+library(readr)
+
+nochange <- read_csv('PCAOct18_SH3IndependentINT_0120Analysis.csv')
+nochange_ids <- unique(unname(unlist(nochange[,2])))
+
+# As before, write out the IDs and then obtain the sequences from UniProt
+
+write.table(nochange_ids,file='sh3_interactors_retained_pca_updated.txt',col.names=FALSE, row.names=FALSE, quote=FALSE)
+
+retained_fasta <- read.fasta('sh3_stuffed_retained_updated.fasta',seqtype='AA')
+retained_seq <- getSequence(retained_fasta)
+
+#For sequence name, combine accession, gene name, and systematic name:
+
+accession <- rapply(strsplit(names(retained_fasta),split='\\|'), function (x) x[2])
+gene_name <- rapply(strsplit(rapply(strsplit(unlist(getAnnot(retained_fasta)),split='GN='), function (x) x[2]),split=' '),function(x) x[1])
+retained_name <- paste(nochange_ids,accession,gene_name,sep='_')
+names(retained_seq) <- retained_name
+
+# Now, retrieve the PWMs for each of the SH3 domains analysed in this PCA assay
+# These PWMs come from (PMID: 26861823), who sourced them from (PMID: 19841731).
+
+pwm_files <- list.files(path='/DoMo-Pred/pwm_dir/')
+
+# Read through each PWM file to generate a list of PWMs
+
+pwm_list <- NULL
+
+for (i in 1:length(pwm_files)) {
+  
+  path <- paste('/DoMo-Pred/pwm_dir/',pwm_files[i],sep='')
+  
+  pwm <- read.table(path)
+  rownames(pwm) <- pwm[,1]
+  colnames(pwm) <- NULL
+  pwm <- pwm[,-1]
+  
+  pwm_list <- c(pwm_list, list(pwm))
+  
+}
+
+names(pwm_list) <- pwm_files
+
+# Now, the PWM IDs need to be mapped to gene names
+
+pwm_ids <- rapply(strsplit(rapply(strsplit(names(pwm_list),split='_'), function(x) x[1]),split='-'), function(x) x[1])
+
+# Again, write out a file and then retrieve the gene names manually using the Uniprot ID mapper
+
+write.table(pwm_ids,file='sh3_pwm_accessions_uniprot.txt',col.names=FALSE, row.names=FALSE, quote=FALSE)
+
+# Read in mapping table and process the strings to generate new names for the PWMs
+
+yeast_sh3_map <- read.table('yeast_sh3_accession_to_GN.txt',header=TRUE,stringsAsFactors = FALSE)
+id_match <- yeast_sh3_map[match(pwm_ids,yeast_sh3_map[,1]),2]
+pwm_names <- paste(id_match,substr(names(pwm_list),7,rapply(strsplit(names(pwm_list),split=''), function(x) length(x))),sep='')
+
+# No PWM records exist for Bud14, Cdc25, or Sdc25
+
+sh3_yeast <- unname(rapply(strsplit(unlist(sh3_pca[,1]),split=' '), function(x) x[1]))
+
+names(pwm_list) <- rapply(strsplit(pwm_names,split='_'), function(x) x[1])
+
+```
+
+Code for the MSS function that is used to score similarity between putative SH3 ligands
+and the SH3 domain specificity motif (between 0 and 1)
+
+```{r}
+
+mss_score <- function(psite,pwm) {
+  
+  psite <- unlist(strsplit(psite,split=''))
+  pwm <- as.matrix(pwm)
+    
+  match.ic = apply(pwm, 2, function(col) sum(col * logb(20 * col), na.rm=T))
+  
+  
+  c=0
+  min=0
+  max = 0
+  
+  for (i in 1:ncol(pwm)) {
+    
+    aa <- psite[i]  
+    
+    # For missing amino acids, we score the '_' position
+    # the same as we would for a minimum frequency AA
+    
+    if (aa == '_') {
+      current <- min(pwm[,i])*match.ic[i]
+    } else {
+      current <- pwm[rownames(pwm) %in% psite[i],i]*match.ic[i]
+    }
+    
+    minimum <- min(pwm[,i])*match.ic[i]
+    maximum <- max(pwm[,i])*match.ic[i]
+    
+    c = c+current
+    min = min+minimum
+    max = max+maximum
+    
+  }
+  
+  mss = (c-min)/(max-min)
+  
+  return(unname(mss))
+  
+}
+
+```
+
+Iterate through each one of the interactors lost upon SH3 stuffing, and then find the
+maximum MSS for the corresponding SH3 PWM in the interactor sequence
+
+```{r}
+
+# Correct for the fact that some SH3 domains may have more than one PWM (Class I) and (Class II)
+
+max_mss_list <- NULL
+tag_vec <- NULL
+
+for (i in 1:length(pwm_list)) {
+  
+  print(i)
+  
+  # Retrieve PWM
+  pwm <- pwm_list[[i]]
+  id <- names(pwm_list)[i]
+  
+  pwm_targets <- NULL
+  target_seqs <- NULL
+  
+  # Find PWM targets
+  pwm_targets <- unique(unname(unlist(sh3_pca[sh3_yeast %in% id,2])))
+  
+  if(length(pwm_targets) == 0) {next}
+  
+  # Retrieve interactor sequences
+  target_seqs <- interactors_seq[rapply(strsplit(names(interactors_seq),split='_'), function(x) x[1]) %in% pwm_targets]
+  
+  max_mss_vec <- NULL
+  
+  # Iterate through the interactors and then retrieve the maximum MSS
+  for (j in 1:length(pwm_targets)) {
+    
+    tag <- paste(names(pwm_list)[i],'_',names(target_seqs)[j],sep='')
+    
+    target_seq <- target_seqs[[j]]
+    
+    start_site_vec <- NULL
+    end_site_vec <- NULL
+    
+    # Generate the start and end sites
+    
+    for (k in 1:ncol(pwm)) {
+      
+      start_site <- paste(paste(rep('_',ncol(pwm)-k),collapse=''),paste(target_seq[1:k],collapse=''),sep='')
+      start_site_vec <- c(start_site_vec, start_site)
+      
+      end_site <- paste(paste(target_seq[(length(target_seq)-k+1):length(target_seq)],collapse=''),paste(rep('_',ncol(pwm)-k),collapse=''),sep='')
+      end_site_vec <- c(end_site_vec, end_site)  
+      
+    }
+    
+    # Now extract all possile binding sites from the sequence
+    
+    middle_site_vec <- NULL
+    
+    for (k in 2:(length(target_seq)-k)) {
+      
+      middle_site <- paste(target_seq[k:(k+ncol(pwm)-1)],collapse='')
+      middle_site_vec <- c(middle_site_vec, middle_site)
+      
+    }
+    
+    candidate_sites <- NULL
+    candidate_sites <- c(start_site_vec,middle_site_vec,rev(end_site_vec))
+    
+    # Iterate through all of the candidate sites and score with the MSS
+    
+    mss_vec <- NULL
+    
+    for (k in 1:length(candidate_sites)) {
+      
+      mss <- mss_score(candidate_sites[k],pwm)
+      mss_vec <- c(mss_vec,mss)
+      
+    }
+    
+    max_mss <- round(as.numeric(max(mss_vec)),3)
+    max_mss_vec <- c(max_mss_vec, max_mss)
+    tag_vec <- c(tag_vec,tag)
+  }
+  
+  max_mss_mat <- cbind(max_mss_vec,pwm_targets)
+  
+  max_mss_list <- c(max_mss_list, list(max_mss_mat))
+  names(max_mss_list)[length(max_mss_list)] <- id
+}
+
+real_data <- as.numeric(unname(rapply(max_mss_list,function(x) x[,1])))
+
+# Correct for the fact that some SH3 domains may have more than one PWM (Class I) and (Class II)
+
+duplicated <- tag_vec[which(duplicated(tag_vec) == TRUE)]
+
+dup_score_max_vec <- NULL
+
+for (i in 1:length(duplicated)) {
+  
+  id <- duplicated[i] 
+  
+  dup_scores <- real_data[tag_vec %in% id]
+  
+  dup_score_max_vec <- c(dup_score_max_vec,max(dup_scores))
+  
+}
+
+real_data <- real_data[!(tag_vec %in% duplicated)]
+
+real_data <- c(real_data, dup_score_max_vec)
+
+#
+
+real_data_lost <- real_data 
+
+```
+
+Repeat the procedure above but for interactors that do not change upon SH3 stuffing.
+
+```{r}
+
+library(stringr)
+
+nochange_mss_list <- NULL
+tag_vec <- NULL
+
+# First, filter retained interactors that were lost following
+# the deletion of a different SH3 domain
+
+sh3_pca <- read_csv('PCAOct18_SH3Interactions_0120Analysis.csv', skip=0, col_names=TRUE)
+sh3_pca[,2] <- gsub('YFR024CA','YFR024C-A',unlist(sh3_pca[,2]))
+sh3_pca[,2] <- gsub('^YFR024C$','YFR024C-A',unlist(sh3_pca[,2]))
+
+lost <- unname(unlist(sh3_pca[,2]))
+
+nochange <- nochange[!unname(unlist(nochange[,2])) %in% lost,]
+nochange_sh3 <- unname(unlist(nochange[,1]))
+
+# Find the maximum MSS for each interactor
+
+for (i in 1:length(pwm_list)) {
+  
+  print(i)
+  
+  pwm <- pwm_list[[i]]
+  id <- names(pwm_list)[i]
+  
+  pwm_targets <- NULL
+  target_seqs <- NULL
+  
+  # Retrieve the interactors of the SH3 domain on the basis of PCA data
+  pwm_targets <- unique(unname(unlist(nochange[nochange_sh3 %in% id,2])))
+  
+  if(length(pwm_targets) == 0) {next}
+  
+  # Retrieve the corresponding target sequences
+  target_seqs <- retained_seq[rapply(strsplit(names(retained_seq),split='_'), function(x) x[1]) %in% pwm_targets]
+  
+  max_mss_vec <- NULL
+  
+  # Iterate through the interactors and then retrieve the maximum MSS
+  for (j in 1:length(pwm_targets)) {
+    
+    tag <- paste(names(pwm_list)[i],'_',names(target_seqs)[j],sep='')
+    target_seq <- target_seqs[[j]]
+    
+    start_site_vec <- NULL
+    end_site_vec <- NULL
+    
+    # Generate the start and end sites
+    
+    for (k in 1:ncol(pwm)) {
+      
+      start_site <- paste(paste(rep('_',ncol(pwm)-k),collapse=''),paste(target_seq[1:k],collapse=''),sep='')
+      start_site_vec <- c(start_site_vec, start_site)
+      end_site <- paste(paste(target_seq[(length(target_seq)-k+1):length(target_seq)],collapse=''),paste(rep('_',ncol(pwm)-k),collapse=''),sep='')
+      end_site_vec <- c(end_site_vec, end_site)  
+      
+    }
+    
+    # Now extract all possile binding sites from the sequence
+    
+    middle_site_vec <- NULL
+    
+    for (k in 2:(length(target_seq)-k)) {
+      middle_site <- paste(target_seq[k:(k+ncol(pwm)-1)],collapse='')
+      middle_site_vec <- c(middle_site_vec, middle_site)
+    }
+    
+    candidate_sites <- NULL
+    candidate_sites <- c(start_site_vec,middle_site_vec,rev(end_site_vec))
+    
+    # Iterate through all of the candidate sites and score with the MSS,
+    # then take the maximum MSS.
+    mss_vec <- NULL
+    
+    for (k in 1:length(candidate_sites)) {
+      
+      mss <- mss_score(candidate_sites[k],pwm)
+      mss_vec <- c(mss_vec,mss)
+      
+    }
+    
+    max_mss <- round(as.numeric(max(mss_vec)),3)
+    max_mss_vec <- c(max_mss_vec, max_mss)
+    tag_vec <- c(tag_vec,tag)
+  }
+  
+  max_mss_mat <- cbind(max_mss_vec,pwm_targets)
+  
+  nochange_mss_list <- c(nochange_mss_list, list(max_mss_mat))
+  names(nochange_mss_list)[length(nochange_mss_list)] <- id
+}
+
+nochange_data <- as.numeric(unname(rapply(nochange_mss_list,function(x) x[,1])))
+
+# Filter values for the same SH3 represented by two PWMs (e.g. Class I and Class II)
+
+duplicated <- tag_vec[which(duplicated(tag_vec) == TRUE)]
+
+dup_score_max_vec <- NULL
+
+for (i in 1:length(duplicated)) {
+  
+  id <- duplicated[i] 
+  
+  dup_scores <- nochange_data[tag_vec %in% id]
+  
+  dup_score_max_vec <- c(dup_score_max_vec,max(dup_scores))
+  
+}
+
+nochange_data <- nochange_data[!(tag_vec %in% duplicated)]
+
+nochange_data <- c(nochange_data, dup_score_max_vec)
+
+```
+
+Generate the null distribution of MSS scores:
+
+```{r}
+
+library(seqinr)
+
+# Generate MSS scores for interactor proteins with completely random sequences
+# Calculate bg AA frequencies
+
+AAs <- c('A','C','D','E','F','G','H','I','K','L','M','N','P','Q','R','S','T','V','W','Y')
+
+sc_proteome <- read.fasta('Scerevisiae_uniprot_reference.fasta', seqtype='AA')
+sc_aa_tab <- table(unlist(getSequence(sc_proteome)))
+sc_aa_tab <- sc_aa_tab[match(AAs,names(sc_aa_tab))]
+sc_aa_freq <- sc_aa_tab/sum(sc_aa_tab)
+
+# Load in the PCA data again
+
+sh3_pca <- read_csv('PCAOct18_SH3Interactions_0120Analysis.csv', skip=0, col_names=TRUE)
+sh3_pca[,2] <- gsub('YFR024CA','YFR024C-A',unlist(sh3_pca[,2]))
+sh3_pca[,2] <- gsub('^YFR024C$','YFR024C-A',unlist(sh3_pca[,2]))
+
+sh3_yeast <- unname(rapply(strsplit(unlist(sh3_pca[,1]),split=' '), function(x) x[1]))
+
+##
+
+# Repeat the scoring procedure used above for the SH3-dependent interactions, but this
+# time with randomised interactor sequences.
+
+random_data_vec <- NULL
+
+for (z in 1:50) {
+  
+  pseudo_max_mss_list_x100 <- NULL
+  
+  tag_vec <- NULL
+  print(z)
+  
+  for (i in 1:length(pwm_list)) {
+  
+  pwm <- pwm_list[[i]]
+  id <- names(pwm_list)[i]
+  
+  pwm_targets <- NULL
+  target_seqs <- NULL
+  
+  pwm_targets <- unique(unname(unlist(sh3_pca[sh3_yeast %in% id,2])))
+  
+  if(length(pwm_targets) == 0) {next}
+  
+  target_seqs <- interactors_seq[rapply(strsplit(names(interactors_seq),split='_'), function(x) x[1]) %in% pwm_targets]
+  
+  max_mss_vec <- NULL
+  
+  for (j in 1:length(pwm_targets)) {
+    
+    target_seq <- target_seqs[[j]]
+    
+    tag <- paste(names(pwm_list)[i],'_',names(target_seqs)[j],sep='')
+    
+    # Random sequence
+    
+    target_seq <- sample(AAs, prob = sc_aa_freq, size = length(target_seq), replace=TRUE)
+    
+    start_site_vec <- NULL
+    end_site_vec <- NULL
+    
+    # Generate the start and end sites
+    
+    for (k in 1:ncol(pwm)) {
+      
+      start_site <- paste(paste(rep('_',ncol(pwm)-k),collapse=''),paste(target_seq[1:k],collapse=''),sep='')
+      start_site_vec <- c(start_site_vec, start_site)
+      
+      end_site <- paste(paste(target_seq[(length(target_seq)-k+1):length(target_seq)],collapse=''),paste(rep('_',ncol(pwm)-k),collapse=''),sep='')
+      end_site_vec <- c(end_site_vec, end_site)  
+      
+    }
+    
+    # Now extract all possile binding sites from the sequence
+    
+    middle_site_vec <- NULL
+    
+    for (k in 2:(length(target_seq)-k)) {
+      
+      middle_site <- paste(target_seq[k:(k+ncol(pwm)-1)],collapse='')
+      middle_site_vec <- c(middle_site_vec, middle_site)
+      
+    }
+    
+    candidate_sites <- NULL
+    candidate_sites <- c(start_site_vec,middle_site_vec,rev(end_site_vec))
+    
+    # Iterate through all of the candidate sites and score with the MSS
+    
+    mss_vec <- NULL
+    
+    for (k in 1:length(candidate_sites)) {
+      
+      mss <- mss_score(candidate_sites[k],pwm)
+      mss_vec <- c(mss_vec,mss)
+      
+    }
+    
+    max_mss <- round(as.numeric(max(mss_vec)),3)
+    max_mss_vec <- c(max_mss_vec, max_mss)
+    tag_vec <- c(tag_vec,tag)
+  }
+  
+  max_mss_mat <- cbind(max_mss_vec,pwm_targets)
+  
+  pseudo_max_mss_list_x100 <- c(pseudo_max_mss_list_x100, list(max_mss_mat))
+  names(pseudo_max_mss_list_x100)[length(pseudo_max_mss_list_x100)] <- id
+  
+}
+
+  random_data <- as.numeric(unname(rapply(pseudo_max_mss_list_x100,function(x) x[,1])))
+
+  # Apply correction
+
+  duplicated <- tag_vec[which(duplicated(tag_vec) == TRUE)]
+
+  dup_score_max_vec <- NULL
+
+  for (d in 1:length(duplicated)) {
+  
+    id <- duplicated[d] 
+  
+    dup_scores <- random_data[tag_vec %in% id]
+    dup_score_max_vec <- c(dup_score_max_vec,max(dup_scores))
+  
+  }
+
+  random_data <- random_data[!(tag_vec %in% duplicated)]
+  random_data <- c(random_data, dup_score_max_vec)
+  random_data_vec <- c(random_data_vec,random_data)
+  
+}  
+
+# Sample N=10,000
+
+pseudo_data <- sample(random_data_vec,size=10000,replace=FALSE)
+
+```
+
+## GAINED
+
+# Repeat the analysis above but for interactions that are gained upon SH3 domain deletion
+
+```{r setup, include=FALSE}
+
+# Script to analyse PCA data for gained interactions
+
+library(readxl)
+library(seqinr)
+
+sh3_pca <- read_csv('PCAOct18_SH3GainedINT_0120Analysis.csv', skip=0, col_names=TRUE)
+sh3_yeast <- unname(rapply(strsplit(unlist(sh3_pca[,1]),split=' '), function(x) x[1]))
+
+#Obtain the AA sequence of all interactors
+
+interactors_ids <- unique(unlist(sh3_pca[,2]))
+interactors_ids <- gsub('YFR024CA','YFR024C-A',interactors_ids)
+interactors_ids <- gsub('^YFR024C$','YFR024C-A',interactors_ids)
+interactors_ids <- unique(interactors_ids)
+
+# Write the IDs of the interactors out into a text file
+
+write.table(interactors_ids,file='sh3_interactors_gained_pca_updated.txt',col.names=FALSE, row.names=FALSE, quote=FALSE)
+
+# Sequences were retrieved using 'Retrieve/ID mapping' tool in UniProt (Ensembl Genomes -> UniProtKB):
+# https://www.uniprot.org/uploadlists/
+
+interactors_fasta <- read.fasta('sh3_interactors_gained_seq_uniprot_updated.fa',seqtype='AA')
+interactors_seq <- getSequence(interactors_fasta)
+
+#For seq name, combine accession, gene name, and systematic name
+
+accession <- rapply(strsplit(names(interactors_fasta),split='\\|'), function (x) x[2])
+gene_name <- rapply(strsplit(rapply(strsplit(unlist(getAnnot(interactors_fasta)),split='GN='), function (x) x[2]),split=' '),function(x) x[1])
+interactors_name <- paste(interactors_ids,accession,gene_name,sep='_')
+names(interactors_seq) <- interactors_name
+
+```
+
+# Compute MSS for gained interactors
+
+```{r}
+
+max_mss_list <- NULL
+tag_vec <- NULL
+
+for (i in 1:length(pwm_list)) {
+  
+  print(i)
+  
+  pwm <- pwm_list[[i]]
+  id <- names(pwm_list)[i]
+  
+  pwm_targets <- NULL
+  target_seqs <- NULL
+  
+  # Identify target sequences for each SH3 domain
+  pwm_targets <- unique(unname(unlist(sh3_pca[sh3_yeast %in% id,2])))
+  
+  if(length(pwm_targets) == 0) {next}
+  
+  # Retrieve the AA sequence for each interactor
+  target_seqs <- interactors_seq[rapply(strsplit(names(interactors_seq),split='_'), function(x) x[1]) %in% pwm_targets]
+  
+  # Calculate the MSS for each possible target site:
+  max_mss_vec <- NULL
+  for (j in 1:length(pwm_targets)) {
+    
+    tag <- paste(names(pwm_list)[i],'_',names(target_seqs)[j],sep='')
+    target_seq <- target_seqs[[j]]
+    start_site_vec <- NULL
+    end_site_vec <- NULL
+    
+    # Generate the start and end sites
+    
+    for (k in 1:ncol(pwm)) {
+      
+      start_site <- paste(paste(rep('_',ncol(pwm)-k),collapse=''),paste(target_seq[1:k],collapse=''),sep='')
+      start_site_vec <- c(start_site_vec, start_site)
+      end_site <- paste(paste(target_seq[(length(target_seq)-k+1):length(target_seq)],collapse=''),paste(rep('_',ncol(pwm)-k),collapse=''),sep='')
+      end_site_vec <- c(end_site_vec, end_site)  
+      
+    }
+    
+    # Now extract all possile binding sites from the sequence
+    
+    middle_site_vec <- NULL
+    
+    for (k in 2:(length(target_seq)-k)) {
+      middle_site <- paste(target_seq[k:(k+ncol(pwm)-1)],collapse='')
+      middle_site_vec <- c(middle_site_vec, middle_site)
+    }
+    
+    candidate_sites <- NULL
+    candidate_sites <- c(start_site_vec,middle_site_vec,rev(end_site_vec))
+    
+    # Iterate through all of the candidate sites and score with the MSS
+    
+    mss_vec <- NULL
+    
+    for (k in 1:length(candidate_sites)) {
+      mss <- mss_score(candidate_sites[k],pwm)
+      mss_vec <- c(mss_vec,mss)
+    }
+    
+    max_mss <- round(as.numeric(max(mss_vec)),3)
+    max_mss_vec <- c(max_mss_vec, max_mss)
+    tag_vec <- c(tag_vec,tag)
+  }
+  
+  max_mss_mat <- cbind(max_mss_vec,pwm_targets)
+  
+  max_mss_list <- c(max_mss_list, list(max_mss_mat))
+  names(max_mss_list)[length(max_mss_list)] <- id
+}
+
+real_data <- as.numeric(unname(rapply(max_mss_list,function(x) x[,1])))
+
+# Filter values for the same SH3 represented by two PWMs (e.g. Class I and Class II)
+
+duplicated <- tag_vec[which(duplicated(tag_vec) == TRUE)]
+dup_score_max_vec <- NULL
+
+for (i in 1:length(duplicated)) {
+  
+  id <- duplicated[i] 
+  dup_scores <- real_data[tag_vec %in% id]
+  dup_score_max_vec <- c(dup_score_max_vec,max(dup_scores))
+  
+}
+
+real_data <- real_data[!(tag_vec %in% duplicated)]
+real_data <- c(real_data, dup_score_max_vec)
+real_data_gained <- real_data
+
+```
+
+## GGplot Random, Retained, Gained, Lost
+
+```{r}
+
+mss_data <- cbind(c(rep('Random',10000),rep('Int. retained',95),rep('Int. gained',116), rep('Int. lost',249)),c(pseudo_data,nochange_data,real_data_gained,real_data_lost))
+mss_data <- data.frame(mss_data,stringsAsFactors = FALSE)
+mss_data[,2] <- as.numeric(mss_data[,2])
+colnames(mss_data) <- c('Protein','Max_MSS')
+mss_data$Protein <- factor(mss_data$Protein, levels = c('Random','Int. retained','Int. gained','Int. lost'))
+
+p <- ggplot(mss_data, aes(x=Protein, y=Max_MSS, color=Protein)) + geom_boxplot(color=c(colors()[261],colors()[261],colors()[261],colors()[261]),fill=c('white','#DCDCDC','#B2182B','#2166AC'),lwd=0.95)
+p <- p+theme_bw()
+p <- p + ylab("Max. MSS") + xlab("Sequence") + ggtitle('Yeast SH3 PWMs')
+p <- p+theme(axis.text=element_text(size=11),axis.title=element_text(size=13.5,face="bold"),plot.title=element_text(size=16,face='bold'))
+p <- p+theme(plot.title = element_text(hjust = 0.5))
+p <- p + theme(legend.position = "none") 
+p <- p + geom_text(data=data.frame(), aes(x=c(1,2,3,4), y=c(1.025,1.025,1.025,1.025), label=c('n=10,000','n=95','n=116','n=249')), col='black', size=4.25)
+
+ggsave(file='Interactions_retained_gained_lost.pdf', plot=p, width=4.5, height=5.8)
+
+```
+
+
+
+
+
+
+
+
+
+
+
