@@ -1,0 +1,715 @@
+---
+title: "SH3_position_conservation"
+author: "David Bradley"
+date: "1/7/2020"
+output: pdf_document
+---
+
+# Retrieval of yeast SH3 full-length sequences
+
+```{r}
+
+library(readxl)
+library(seqinr)
+
+# Retrieve the systematic IDs for all yeast SH3 proteins: 
+
+sh3_pca_data <- read_xlsx('SH3Interactions_PCAdataForDavid_0919.xlsx', skip=0, col_names=TRUE, sheet = 1)
+yeast_sh3 <- unname(unlist(sh3_pca_data[,2]))[!is.na(unname(unlist(sh3_pca_data[,2])))]
+
+write.table(yeast_sh3,file='yeast_SH3.fasta',row.names=FALSE,col.names=FALSE,quote=FALSE)
+
+# Retrieve full-length sequences manually using UniProt (https://www.uniprot.org/uploadlists/)
+
+# Read in the SH3 full-length sequences
+yeast_sh3_full_seq <- read.fasta('yeast_sh3_full_length.fasta',seqtype='AA')
+
+yeast_sh3_symbol <- rapply(strsplit(rapply(strsplit(unlist(getAnnot(yeast_sh3_full_seq)),split='GN='), function(x) x[2]), split=' '), function(x) x[1])
+
+# Remove SDC25 (likely pseudogene)
+
+yeast_sh3 <- yeast_sh3[-24]
+
+```
+
+# Ensembl Compara identification of orthologues and calculation of positional conservation
+
+```{r}
+library(httr)
+library(jsonlite)
+library(xml2)
+library(ggplot2)
+
+frac_vec <- NULL
+name_vec <- NULL
+
+# Count number of unique species across all 23 orthologous groups
+
+species_vec <- NULL
+
+for (i in 1:length(yeast_sh3)) {
+  
+  print(i)
+  
+  yeast_id <- yeast_sh3[i]
+  
+  # Retrieve fungal orthologues for each S. cerevisae SH3
+  
+  server <- "https://rest.ensembl.org"
+  ext <- paste("/homology/id/",yeast_id,"?aligned=0;compara=fungi",sep="")
+   
+  r <- GET(paste(server, ext, sep = ""), content_type("application/json"))
+   
+  stop_for_status(r)
+   
+  # Parse the JSON object
+  
+  orthology_df <- fromJSON(toJSON(content(r)),simplifyDataFrame = TRUE)[[1]]$homologies[[1]]
+  
+  # 1-to-1 orthologues only
+  orthology_one2one <- orthology_df[which(unlist(orthology_df[,which(colnames(orthology_df) == 'type')]) == 'ortholog_one2one'),]
+  
+  orthology_one2one_type <- orthology_one2one[,which(colnames(orthology_one2one)=='target')]
+  
+  orthology_one2one_seq <- orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'seq')]
+  
+  orthology_one2one_seq_species <- unlist(orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'species')])
+  
+  species_vec <- c(species_vec, orthology_one2one_seq_species)
+  
+}  
+
+# Identify SH3 domain positions for each orthologue
+# and then determine if the domain position is conserved
+# relative to the S. cerevisiae orthologue.
+
+for (i in 1:length(yeast_sh3)) {
+  
+  print(i)
+  
+  yeast_id <- yeast_sh3[i]
+  
+  # Retrieve fungal orthologues for each S. cerevisae SH3
+  
+  server <- "https://rest.ensembl.org"
+  ext <- paste("/homology/id/",yeast_id,"?aligned=0;compara=fungi",sep="")
+   
+  r <- GET(paste(server, ext, sep = ""), content_type("application/json"))
+   
+  stop_for_status(r)
+   
+  # Parse the JSON object
+  
+  orthology_df <- fromJSON(toJSON(content(r)),simplifyDataFrame = TRUE)[[1]]$homologies[[1]]
+  
+  # 1-to-1 orthologues only
+  
+  orthology_one2one <- orthology_df[which(unlist(orthology_df[,which(colnames(orthology_df) == 'type')]) == 'ortholog_one2one'),]
+  
+  orthology_one2one_type <- orthology_one2one[,which(colnames(orthology_one2one)=='target')]
+  
+  orthology_one2one_seq <- orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'seq')]
+  
+  orthology_one2one_seq_species <- unlist(orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'species')])
+  
+  sc_seq <- paste(getSequence(yeast_sh3_full_seq[[i]]),collapse='')
+  sc_name <- rapply(strsplit(rapply(strsplit(names(yeast_sh3_full_seq),split='_'),function(x) x[1]),split='\\|'), function(x) x[3])[i]
+  
+  # Write out the orthologue sequences
+  
+  write.fasta(c(sc_seq,orthology_one2one_seq),file.out='orthology_one2one_seq.fa',names=c(sc_name,orthology_one2one_seq_species))
+  
+  # Now, run an SH3 HMM through each of the orthologue sequences
+  
+  # Here I will use reporting thresholds of 0.01 for full-length and domain E values.
+  # This corresponds to the default threshold used to determine significance by HMMER
+  
+  system('hmmscan --domtblout hmmscan_tbl.txt -E 0.01 --domE 0.01 Pfam-A.hmm orthology_one2one_seq.fa')
+  
+  # Read in the hmmscan output
+  
+  hmmscan_table <- read.delim('hmmscan_tbl.txt',skip=1,sep='',stringsAsFactors = FALSE)
+  colnames(hmmscan_table) <- c('Domain','Accession','hmm_length','seq_ID','seq_accession','seq_length','E',
+                               'score','bias','#','of','c-Evalue','i-Evalue','score','bias','hmm_from','hmm_to',
+                               'ali_from','ali_to','env_from','env_to','acc','A','B','C')
+  
+  # SH3 clan from Pfam (https://pfam.xfam.org/clan/SH3)
+  
+  sh3_clan <- c('CAP_GLY','DUF150_C','DUF1541','DUF1653','DUF3104','DUF3247','DUF3601','DUF4453',
+                'DUF4648','Gemin6','Gemin7','GW','hSH3','KapB','MLVIN_C','Myosin_N','NdhS',
+                'PhnA','SH3_1','SH3_10','SH3_11','SH3_12','SH3_13','SH3_14','SH3_15','SH3_16',
+                'SH3_17','SH3_18','SH3_19','SH3_2','SH3_3','SH3_4','SH3_5','SH3_6','SH3_9')
+  
+  # Iterate through each sequence and extract the relevant information from hmm_scan
+  
+  sh3_df <- NULL
+  
+  sequence_names <- c(sc_name,orthology_one2one_seq_species)
+  
+  for (j in 1:length(sequence_names)) {
+    
+    seq <- sequence_names[j]
+    
+    seq_hmm_scan <- hmmscan_table[hmmscan_table[,4] %in% seq,]
+    
+    seq_domains <- seq_hmm_scan[,1] 
+    
+    # Extract domains that belong to the pfam 'SH3' clan
+    
+    seq_sh3 <- seq_hmm_scan[seq_domains %in% sh3_clan,]
+    
+    # Extract start and end points of the SH3
+    
+    sh3_start_end <- seq_sh3[,c(20,21)]
+    
+    if(nrow(seq_sh3) == 0) {next}
+    
+    # Exclude redundant domain annotations (those with a greater than or equal to
+    # 10 residue overlap with another SH3 annotation)
+    
+    dom_pos_vec <- NULL
+    k_vec <- NULL
+    
+    for (k in 1:nrow(sh3_start_end)) {
+      
+      dom_pos <- sh3_start_end[k,1]:sh3_start_end[k,2]
+      
+      if (length(intersect(dom_pos,dom_pos_vec)) >= 10) {next}
+      
+      dom_pos_vec <- c(dom_pos_vec, dom_pos)
+      
+      k_vec <- c(k_vec,k)
+      
+    }
+    
+    sh3_info <- seq_sh3[k_vec,c(4,1,20,21,6)]
+    
+    sh3_df <- rbind(sh3_df, sh3_info)
+    
+  }
+  
+  # Calculate position in full-length sequence
+  
+  sh3_df_pos <- cbind(sh3_df,as.numeric(sh3_df[,3])/as.numeric(sh3_df[,5]))
+  colnames(sh3_df_pos) <- c(colnames(sh3_df),'pos')
+  
+  sh3_title <- paste(yeast_sh3_symbol[i],'1-to-1 orthologues (Fungi)')
+  sh3_file <- paste(yeast_sh3_symbol[i],'_hist.pdf',sep='')
+  
+  # SH3 start positions in the S. cerevisiae homologue
+  ref_domains <- sort(sh3_df_pos[sh3_df_pos[,1] == sc_name,6],decreasing = FALSE)
+  
+  options(warn=2)
+  
+  domain_dex_vec <- NULL
+  
+  # For each orthologue, assign the SH3 domains as '1', '2', or
+  # '3' in cases where more than one domain is found in a single
+  # protein
+  
+  for (j in 1:length(sequence_names)) {
+    
+    seq <- sequence_names[j]
+    
+    seq_hmm_scan <- sh3_df_pos[sh3_df_pos[,1] %in% seq,]
+    
+    pos <- seq_hmm_scan[,6]
+    
+    if(length(pos) == 0) {next}
+    
+    dist_vec_1 <- NULL
+   
+    for (k in 1:length(pos)) {
+          
+      dist <- abs(pos[k] - ref_domains[1])
+        
+      dist_vec_1 <- c(dist_vec_1, dist)
+        
+    }
+    
+    domain_dex_vec <- c(domain_dex_vec,order(dist_vec_1,decreasing=FALSE))
+    
+    dist_vec_2 <- NULL
+    
+    if(length(ref_domains) > 1) {
+      
+      for (k in 1:length(pos)) {
+          
+      dist <- abs(pos[k] - ref_domains[2])
+        
+      dist_vec_2 <- c(dist_vec_2, dist)
+     
+      }
+       
+      dom2_dex <- which(dist_vec_2 == min(dist_vec_2))
+      
+        if(domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) < min(dist_vec_2)) {
+        
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex]
+        
+        } else if (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) > min(dist_vec_2)) {
+          
+          two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 1
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+          
+        } else if  (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 3) {
+          
+          two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 3
+         
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+           
+        }  else {
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+          
+        }
+      
+        if (identical(order(dist_vec_1),order(dist_vec_2))) {
+          
+          domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] <- 1:length(pos)
+          
+        }
+      
+      
+      
+      } 
+    
+  }
+  
+  # Generate a GGplot histogram  of SH3 start positions where the different domains are coloured
+  # differently.
+  
+  pos_df <- cbind(sh3_df_pos[,6],domain_dex_vec)
+  colnames(pos_df) <- c('pos','Domain')
+  pos_df <- data.frame(pos_df, stringsAsFactors = FALSE)
+  pos_df[,1] <- as.numeric(pos_df[,1])
+  pos_df[,2] <- as.factor(pos_df[,2])
+  
+  p <- ggplot(pos_df, aes(x=pos, fill=Domain)) + geom_histogram(binwidth=0.0075, color='black', position='identity', alpha=0.6) # , fill=c(colors()[71],colors()[373])
+  p <- p+theme(legend.position="top")
+  p <- p+theme_bw()
+  p <- p + ylab("Frequency") + xlab("SH3 position") + ggtitle(sh3_title)
+  p <- p+theme(plot.title = element_text(hjust = 0.5))
+  p <- p+theme(axis.text=element_text(size=12),axis.title=element_text(size=12,face="bold"),plot.title=element_text(size=12,face='bold'))
+  p <- p+coord_cartesian(xlim=c(0,1))
+  p <- p+scale_fill_manual(values=c(colors()[132], colors()[123],colors()[71],colors()[469]))
+  p
+  
+  ggsave(file=sh3_file, plot=p, width=8.8, height=5.8)
+  
+  
+  # Find relative frequency of orthologues with SH3 start positions outside a 10% window surrounding
+  # the domain positions in the S. cerevisiae homologues
+  
+  pos_df <- cbind(sh3_df_pos,domain_dex_vec)
+  
+  for (j in 1:length(ref_domains)) {
+    
+    name <- paste(sc_name,'-',j,sep='')
+    
+    sc_ref <- ref_domains[j]
+    
+    sc_ortho <- pos_df[which(pos_df[,7] == j),]
+    
+    sc_ortho_pos <- sc_ortho[,6]
+    
+    sc_ortho_pos_length <- length(sc_ortho_pos)
+    
+    sc_ortho_pos_proximal <- length(which(abs(sc_ortho_pos - sc_ref) < 0.1))
+    
+    frac <-  sc_ortho_pos_proximal / sc_ortho_pos_length
+    frac_vec <- c(frac_vec, frac)
+    name_vec <- c(name_vec, name)
+    
+  }
+  
+}  
+  
+names(frac_vec) <- name_vec
+
+# Generate percentage-stacked bar chart for positional conservation
+
+frac_vec <- sort(frac_vec,decreasing=TRUE)
+names(frac_vec) <- gsub('-1','',names(frac_vec))
+
+# Add '-1' to relevant domains
+
+multi_sh3 <- names(which(table(rapply(strsplit(names(frac_vec),split='-'), function(x) x[1])) > 1))
+names(frac_vec)[names(frac_vec) %in% multi_sh3] <- paste(names(frac_vec[names(frac_vec) %in% multi_sh3]),'-1',sep='')
+
+# Exclude SLA1-4
+frac_vec <- frac_vec[!names(frac_vec) == 'SLA1-4']
+
+# Construct the dataframe used as an input for ggplot
+
+frac_df <- cbind(c(frac_vec,(1-frac_vec)),c(names(frac_vec),names(frac_vec)),c(rep('Conserved',length(frac_vec)),rep('Non-conserved',length(frac_vec))))
+
+colnames(frac_df) <- c('Fraction','Domain','Status')
+frac_df <- data.frame(frac_df, stringsAsFactors = FALSE)
+frac_df[,1] <- as.numeric(frac_df[,1])
+frac_df[,3] <- as.factor(frac_df[,3])
+frac_df$Status <- factor(frac_df$Status, levels = c('Non-conserved','Conserved'))
+frac_df$Domain <- factor(frac_df$Domain, levels = names(frac_vec))
+
+g <- ggplot(frac_df, aes(y=Fraction, x=Domain, fill=Status)) + 
+    geom_bar(position="fill", stat="identity")
+g <- g+ theme_bw()
+g <- g+scale_fill_manual(values=c(colors()[71], colors()[132]))
+g <- g+theme(axis.text=element_text(size=10),axis.title=element_text(size=11,face="bold"),plot.title=element_text(size=13,face='bold'))
+g <- g + theme(axis.text.x = element_text(size=8, angle=90))
+g <- g + ggtitle('Positional conservation among 1-to-1 orthologs')
+g <- g + theme(plot.title = element_text(hjust = 0.5))
+g <- g + theme(legend.title = element_blank())
+g
+
+frac_df_pos_con <- frac_df
+
+```
+
+# SH3 domain sequence conservation between orthologues
+
+```{r}
+
+# N.B. Much of the code used above is reproduced here as the same
+# code is needed to extract the SH3 domain sequences before the sequence
+# conservation can be calculated
+
+library(httr)
+library(jsonlite)
+library(xml2)
+library(ggplot2)
+
+# For each set of orthologous SH3 domains, calculate the mean
+# sequence identity relative to the S. cerevisiae copy. The SH3
+# domain positions will have to be extracted again, as above.
+
+frac_vec <- NULL
+name_vec <- NULL
+mean_pair_dist_vec <- NULL
+
+detach("package:bio3d", unload=TRUE)
+library(seqinr)
+
+for (i in 1:length(yeast_sh3)) {
+  
+  print(i)
+  
+  yeast_id <- yeast_sh3[i]
+  
+  # Retrieve fungal orthologues from Ensembl Compara
+  
+  server <- "https://rest.ensembl.org"
+  ext <- paste("/homology/id/",yeast_id,"?aligned=0;compara=fungi",sep="")
+   
+  r <- GET(paste(server, ext, sep = ""), content_type("application/json"))
+   
+  stop_for_status(r)
+   
+  # Parse the JSON object
+  
+  orthology_df <- fromJSON(toJSON(content(r)),simplifyDataFrame = TRUE)[[1]]$homologies[[1]]
+  
+  # 1-to-1 orthologs only
+  
+  orthology_one2one <- orthology_df[which(unlist(orthology_df[,which(colnames(orthology_df) == 'type')]) == 'ortholog_one2one'),]
+  
+  orthology_one2one_type <- orthology_one2one[,which(colnames(orthology_one2one)=='target')]
+  
+  orthology_one2one_seq <- orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'seq')]
+  
+  orthology_one2one_seq_species <- unlist(orthology_one2one_type[,which(colnames(orthology_one2one_type) == 'species')])
+  
+  sc_seq <- paste(getSequence(yeast_sh3_full_seq[[i]]),collapse='')
+  sc_name <- rapply(strsplit(rapply(strsplit(names(yeast_sh3_full_seq),split='_'),function(x) x[1]),split='\\|'), function(x) x[3])[i]
+  
+  # Write out the orthologue sequences
+  
+  write.fasta(c(sc_seq,orthology_one2one_seq),file.out='orthology_one2one_seq.fa',names=c(sc_name,orthology_one2one_seq_species))
+  
+  # Now, run an SH3 HMM through each of the orthologue sequences
+  
+  # Here I will use reporting thresholds of 0.01 for full-length and domain E values.
+  # This corresponds to default threshold used to determine significance by HMMER
+  
+  system('hmmscan --domtblout hmmscan_tbl.txt -E 0.01 --domE 0.01 Pfam-A.hmm orthology_one2one_seq.fa')
+  
+  # Read in the hmmscan output
+  
+  hmmscan_table <- read.delim('hmmscan_tbl.txt',skip=1,sep='',stringsAsFactors = FALSE)
+  colnames(hmmscan_table) <- c('Domain','Accession','hmm_length','seq_ID','seq_accession','seq_length','E',
+                               'score','bias','#','of','c-Evalue','i-Evalue','score','bias','hmm_from','hmm_to',
+                               'ali_from','ali_to','env_from','env_to','acc','A','B','C')
+  
+  # All families belonging to the SH3 clan from Pfam (https://pfam.xfam.org/clan/SH3):
+  
+  sh3_clan <- c('CAP_GLY','DUF150_C','DUF1541','DUF1653','DUF3104','DUF3247','DUF3601','DUF4453',
+                'DUF4648','Gemin6','Gemin7','GW','hSH3','KapB','MLVIN_C','Myosin_N','NdhS',
+                'PhnA','SH3_1','SH3_10','SH3_11','SH3_12','SH3_13','SH3_14','SH3_15','SH3_16',
+                'SH3_17','SH3_18','SH3_19','SH3_2','SH3_3','SH3_4','SH3_5','SH3_6','SH3_9')
+  
+  # Iterate through each sequence and extract the relevant information from hmm_scan
+  
+  sh3_df <- NULL
+  
+  sequence_names <- c(sc_name,orthology_one2one_seq_species)
+  
+  for (j in 1:length(sequence_names)) {
+    
+    seq <- sequence_names[j]
+    
+    seq_hmm_scan <- hmmscan_table[hmmscan_table[,4] %in% seq,]
+    
+    seq_domains <- seq_hmm_scan[,1] 
+    
+    # Extract domains that belong to the pfam 'SH3' clan
+    
+    seq_sh3 <- seq_hmm_scan[seq_domains %in% sh3_clan,]
+    
+    sh3_start_end <- seq_sh3[,c(20,21)]
+    
+    if(nrow(seq_sh3) == 0) {next}
+    
+    # Exclude redundant domain annotations (defined here as domains
+    # with more than 10 residues of overlap)
+    
+    dom_pos_vec <- NULL
+    k_vec <- NULL
+    
+    for (k in 1:nrow(sh3_start_end)) {
+      
+      dom_pos <- sh3_start_end[k,1]:sh3_start_end[k,2]
+      
+      if (length(intersect(dom_pos,dom_pos_vec)) >= 10) {next}
+      
+      dom_pos_vec <- c(dom_pos_vec, dom_pos)
+      
+      k_vec <- c(k_vec,k)
+      
+    }
+    
+    sh3_info <- seq_sh3[k_vec,c(4,1,20,21,6)]
+    
+    sh3_df <- rbind(sh3_df, sh3_info)
+    
+  }
+  
+  # Calculate position in full-length sequence
+  
+  sh3_df_pos <- cbind(sh3_df,as.numeric(sh3_df[,3])/as.numeric(sh3_df[,5]))
+  colnames(sh3_df_pos) <- c(colnames(sh3_df),'pos')
+  
+  ref_domains <- sort(sh3_df_pos[sh3_df_pos[,1] == sc_name,6],decreasing = FALSE)
+  
+  options(warn=2)
+  
+  # Assign indexes to each SH3 domain ('1', '2', etc.); important for
+  # orthologues with more than one SH3 domain
+  
+  domain_dex_vec <- NULL
+  
+  for (j in 1:length(sequence_names)) {
+    
+    seq <- sequence_names[j]
+    
+    seq_hmm_scan <- sh3_df_pos[sh3_df_pos[,1] %in% seq,]
+    
+    pos <- seq_hmm_scan[,6]
+    
+    if(length(pos) == 0) {next}
+    
+    dist_vec_1 <- NULL
+   
+    for (k in 1:length(pos)) {
+          
+      dist <- abs(pos[k] - ref_domains[1])
+        
+      dist_vec_1 <- c(dist_vec_1, dist)
+        
+    }
+    
+    domain_dex_vec <- c(domain_dex_vec,order(dist_vec_1,decreasing=FALSE))
+    
+    dist_vec_2 <- NULL
+    
+    if(length(ref_domains) > 1) {
+      
+      for (k in 1:length(pos)) {
+          
+      dist <- abs(pos[k] - ref_domains[2])
+        
+      dist_vec_2 <- c(dist_vec_2, dist)
+     
+      }
+       
+      dom2_dex <- which(dist_vec_2 == min(dist_vec_2))
+      
+        if(domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) < min(dist_vec_2)) {
+        
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex]
+        
+        } else if (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) > min(dist_vec_2)) {
+          
+          two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 1
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+          
+        } else if  (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 3) {
+          
+          two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 3
+         
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+           
+        }  else {
+          
+          domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
+          
+        }
+      
+        if (identical(order(dist_vec_1),order(dist_vec_2))) {
+          
+          domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] <- 1:length(pos)
+          
+        }
+      
+      
+      
+      } 
+    
+  }
+  
+  pos_df <- cbind(sh3_df_pos,domain_dex_vec)
+  
+  # Retrieve orthologous SH3 domain sequences and then calculate sequence similarity.
+  
+  n_domain <- length(grep(pos_df[1,1],pos_df[,1]))
+  
+  # Read in the full-length orthologous sequences
+  
+  ortho_seq <- read.fasta('orthology_one2one_seq.fa',seqtype='AA')
+  
+  for (j in 1:n_domain) {
+    
+    query_names <- pos_df[which(pos_df[,7] == j),1]
+    query_seq_list <- ortho_seq[names(ortho_seq) %in% query_names]
+    query_seq <- getSequence(query_seq_list)
+    names(query_seq) <- names(query_seq_list)
+    
+    query_sh3_start <- as.numeric(pos_df[which(pos_df[,7] == j),3])
+    query_sh3_end <- as.numeric(pos_df[which(pos_df[,7] == j),4])
+    
+    query_sh3_vec <- NULL
+    
+    for (k in 1:length(query_names)) {
+      
+      query_sh3_seq <- paste(query_seq[[k]][query_sh3_start[k]:query_sh3_end[k]],collapse='')
+      query_sh3_vec <- c(query_sh3_vec,query_sh3_seq)
+      
+    }
+    
+    # Write out the FASTA file
+    
+    write.fasta(strsplit(query_sh3_vec,split=''),names=names(query_seq),file.out='fungi_ortho_SH3_domain_seq.fasta')
+    
+    # MAFFT L-INS-i alignment
+    
+    system('mafft --localpair --maxiterate 1000 fungi_ortho_SH3_domain_seq.fasta > fungi_ortho_SH3_domain_seq_al.fasta')
+    
+    library(bio3d)
+
+    # Read sequence using bio3d and calculate sequence similarity
+    ortho_seq_al <- read.fasta('fungi_ortho_SH3_domain_seq_al.fasta')
+    similarities <- seqidentity(ortho_seq_al,similarity=TRUE,normalize=TRUE)
+    
+    # Take the sequence similarities for the cerevisiae copy only and then take the mean
+    mean_pair_dist <- mean(similarities[,1],na.rm=TRUE) 
+    
+    detach("package:bio3d", unload=TRUE)
+    
+    mean_pair_dist_vec <- c(mean_pair_dist_vec, mean_pair_dist)
+    
+    names(mean_pair_dist_vec)[length(mean_pair_dist_vec)] <- paste(pos_df[1,1],'_',j,sep='')
+    
+  }
+  
+  ###
+  
+  # Find relative frequency of orthologues with SH3 start positions outside 10%  window surrounding
+# the SH3 start positions in the S. cerevisiae homologues
+  
+  pos_df <- cbind(sh3_df_pos,domain_dex_vec)
+  
+  for (j in 1:length(ref_domains)) {
+    
+    name <- paste(sc_name,'-',j,sep='')
+    
+    sc_ref <- ref_domains[j]
+    
+    sc_ortho <- pos_df[which(pos_df[,7] == j),]
+    
+    sc_ortho_pos <- sc_ortho[,6]
+    
+    sc_ortho_pos_length <- length(sc_ortho_pos)
+    
+    sc_ortho_pos_proximal <- length(which(abs(sc_ortho_pos - sc_ref) < 0.1))
+    
+    frac <-  sc_ortho_pos_proximal / sc_ortho_pos_length
+    frac_vec <- c(frac_vec, frac)
+    name_vec <- c(name_vec, name)
+    
+  }
+  
+} 
+  
+names(frac_vec) <- name_vec
+
+# Plot positional and sequence conservation together
+
+# Remove SLA1-4 
+
+mean_pair_dist_vec_sans_sla14 <- mean_pair_dist_vec[!names(mean_pair_dist_vec) == 'SLA1-4']
+
+# Prepare input dataframe for GGplot
+
+frac_df <- frac_df_pos_con
+frac_df<- frac_df_pos_con[!rownames(frac_df_pos_con) %in% 'SLA1-4',]
+frac_df <- data.frame(frac_df,stringsAsFactors = FALSE)
+frac_df <- cbind(frac_df,c(mean_pair_dist_vec_sans_sla14,mean_pair_dist_vec_sans_sla14))
+frac_df <- cbind(frac_df,rep('Similarity',54)) 
+colnames(frac_df) <- c('Fraction','Domain','Position','Score','Sequence')
+frac_df[,1] <- as.numeric(frac_df[,1])
+frac_df[,4] <- as.numeric(frac_df[,4])
+frac_df[,2] <- as.factor(frac_df[,2])
+frac_df$Position <- factor(frac_df$Position, levels = c('Non-conserved','Conserved'))
+
+frac_df[,2] <- gsub('^SLA1$','SLA1-1',frac_df[,2])
+frac_df[,2] <- gsub('^BZZ1$','BZZ1-1',frac_df[,2])
+frac_df[,2] <- gsub('^BEM1$','BEM1-1',frac_df[,2])
+
+frac_df$Domain <- factor(frac_df$Domain, levels = frac_df$Domain[1:27])
+
+g <- ggplot(data=frac_df, aes(x=Domain)) + 
+  geom_bar(stat="identity", position='fill',aes(y=Fraction,fill=Position))
+g <- g+ theme_bw()
+g <- g+scale_fill_manual(values=c(colors()[71], colors()[132]))
+g <- g + ggtitle('')
+g <- g+ylab('Proportion')
+g <- g+xlab('')
+g <- g + theme(plot.title = element_text(hjust = 0.5))
+g <- g+theme(axis.text=element_text(size=8),axis.title=element_text(size=11,face="bold"),plot.title=element_text(size=14,face='bold'))
+g <- g + theme(axis.text.x = element_text(size=8, angle=90))
+g <- g + geom_point(data=frac_df,aes(y=Score, shape=Sequence), size=3, show.legend=, inherit.aes = TRUE)
+g <- g+theme(legend.text=element_text(size=7),legend.title=element_text(size=8))
+g
+
+ggsave(file='sh3_seq_pos_con_bar.eps', plot=g, width=8.8, height=5.8) 
+
+```
