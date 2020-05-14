@@ -210,9 +210,7 @@ for (i in 1:length(yeast_sh3)) {
   for (j in 1:length(sequence_names)) {
     
     seq <- sequence_names[j]
-    
     seq_hmm_scan <- sh3_df_pos[sh3_df_pos[,1] %in% seq,]
-    
     pos <- seq_hmm_scan[,6]
     
     if(length(pos) == 0) {next}
@@ -222,21 +220,17 @@ for (i in 1:length(yeast_sh3)) {
     for (k in 1:length(pos)) {
           
       dist <- abs(pos[k] - ref_domains[1])
-        
       dist_vec_1 <- c(dist_vec_1, dist)
         
     }
     
     domain_dex_vec <- c(domain_dex_vec,order(dist_vec_1,decreasing=FALSE))
-    
     dist_vec_2 <- NULL
     
     if(length(ref_domains) > 1) {
-      
       for (k in 1:length(pos)) {
           
       dist <- abs(pos[k] - ref_domains[2])
-        
       dist_vec_2 <- c(dist_vec_2, dist)
      
       }
@@ -244,41 +238,28 @@ for (i in 1:length(yeast_sh3)) {
       dom2_dex <- which(dist_vec_2 == min(dist_vec_2))
       
         if(domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) < min(dist_vec_2)) {
-        
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex]
         
         } else if (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) > min(dist_vec_2)) {
           
           two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 1
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
           
         } else if  (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 3) {
           
           two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 3
-         
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
            
         }  else {
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
-          
         }
       
         if (identical(order(dist_vec_1),order(dist_vec_2))) {
-          
           domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] <- 1:length(pos)
-          
         }
-      
-      
-      
       } 
-    
   }
   
   # Generate a GGplot histogram  of SH3 start positions where the different domains are coloured
@@ -515,9 +496,7 @@ for (i in 1:length(yeast_sh3)) {
   for (j in 1:length(sequence_names)) {
     
     seq <- sequence_names[j]
-    
     seq_hmm_scan <- sh3_df_pos[sh3_df_pos[,1] %in% seq,]
-    
     pos <- seq_hmm_scan[,6]
     
     if(length(pos) == 0) {next}
@@ -527,7 +506,6 @@ for (i in 1:length(yeast_sh3)) {
     for (k in 1:length(pos)) {
           
       dist <- abs(pos[k] - ref_domains[1])
-        
       dist_vec_1 <- c(dist_vec_1, dist)
         
     }
@@ -537,53 +515,38 @@ for (i in 1:length(yeast_sh3)) {
     dist_vec_2 <- NULL
     
     if(length(ref_domains) > 1) {
-      
       for (k in 1:length(pos)) {
           
       dist <- abs(pos[k] - ref_domains[2])
-        
       dist_vec_2 <- c(dist_vec_2, dist)
      
       }
        
       dom2_dex <- which(dist_vec_2 == min(dist_vec_2))
-      
         if(domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) < min(dist_vec_2)) {
-        
+          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex]
         
         } else if (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 1 & min(dist_vec_1) > min(dist_vec_2)) {
           
           two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 1
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
           
         } else if  (domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] == 3) {
           
           two_dex <- which(domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] == 2)
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+two_dex] <- 3
-         
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
            
         }  else {
-          
           domain_dex_vec[length(domain_dex_vec)-length(pos)+dom2_dex] <- 2
-          
         }
       
         if (identical(order(dist_vec_1),order(dist_vec_2))) {
-          
           domain_dex_vec[(length(domain_dex_vec)-length(pos)+1):length(domain_dex_vec)] <- 1:length(pos)
-          
         }
-      
-      
-      
       } 
-    
   }
   
   pos_df <- cbind(sh3_df_pos,domain_dex_vec)
