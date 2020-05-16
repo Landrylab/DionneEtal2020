@@ -1,0 +1,235 @@
+---
+title: "SLA_shuffle_growth_analysis"
+author: "David Bradley"
+date: "1/23/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+1) Load in the PCA interaction data, find the Euclidean distances, and then cluster:
+
+```{r}
+
+library(tidyverse)
+
+# First, read in the PCA data for the SLA1 shuffle experiments
+sh3_pca_swapped <- read_csv('Sla1PPIs_270420.csv')
+
+# Take the data frame given and convert the data in the form of a  matrix where
+# the number of rows is equal to the number of different SH3s, and the number of columns
+# is equal to the number of different interactors.  Therefore:
+
+sh3_swapped <- unique(unlist(sh3_pca_swapped[,1]))
+interactors_swapped <-  unique(unname(unlist(sh3_pca_swapped[,2]))) 
+  
+rows <- length(sh3_swapped)
+cols <- length(interactors_swapped)
+
+# Initialise matrix:
+swapped_int_mat <- matrix(0,nrow=rows,ncol=cols)
+rownames(swapped_int_mat) <- sh3_swapped
+colnames(swapped_int_mat) <- interactors_swapped
+
+# Assign correct matrix values
+
+for (i in 1:length(sh3_swapped)) {
+  for (j in 1:length(interactors_swapped)) {
+  
+    sh3_name <- sh3_swapped[i]
+    int_name <- interactors_swapped[j]
+  
+    int_record <- sh3_pca_swapped[sh3_pca_swapped[,1] == sh3_name & sh3_pca_swapped[,2] == int_name,] 
+    int_score <- unlist(unname(int_record[,5]))
+    
+    # If no record is found for a bait-prey pair, set interaction score to 0
+    
+    if(length(int_score) == 0) {int_score <- 0}
+
+    swapped_int_mat[i,j] <- int_score
+    
+  }
+}
+
+```
+
+2) Use the same approach to generate a matrix for the SLA1 growth data:
+
+```{r}
+
+growth_data <- read_csv('Sla1Growth_270420.csv')
+
+# Strains
+
+sh3_swapped_growth <- unique(unlist(growth_data[,2]))
+
+# Remove SLA1 KO
+
+sh3_swapped_growth <- sh3_swapped_growth[-which(sh3_swapped_growth == 'SLA1 KO')]
+
+# Remove bad strain 'SLA1 SH3-2|SH3-3|SH3-1' from analysis:
+
+sh3_swapped_growth <- sh3_swapped_growth[-which(sh3_swapped_growth == 'SLA1 SH3-2|SH3-3|SH3-1')]
+
+conditions <- unique(unlist(growth_data[,1]))
+
+rows <- length(sh3_swapped_growth)
+cols <- length(conditions)
+
+# Initialise matrix:
+growth_mat <- matrix(0,nrow=rows,ncol=cols)
+rownames(growth_mat) <- sh3_swapped_growth
+colnames(growth_mat) <- conditions
+
+# Assign correct matrix values
+
+for (i in 1:length(sh3_swapped_growth)) {
+  for (j in 1:length(conditions)) {
+  
+    sh3_name <- sh3_swapped_growth[i]
+    int_name <- conditions[j]
+     
+    # Obtain ratio
+    
+    int_record <- growth_data[growth_data[,2] == sh3_name & growth_data[,1] == int_name,] 
+    int_score <- unlist(unname(int_record[,5]))
+    
+    # If we find no record for a strain-growth combination, set score to NA
+    
+    if(length(int_score) == 0) {growth_mat[i,j] <- NA; next}
+    
+    growth_mat[i,j] <- int_score
+    
+  }
+}
+
+```
+
+3) Generate a distance matrix between the interaction profiles of different SH3 domains, and then perform
+hierarchical clustering. Repeat for the growth data:
+
+```{r}
+
+swapped_int_mat_fil <- swapped_int_mat 
+
+# Generate the Euclidean distance matrices for the SLA1 PPI data and the SLA1 growth data:
+
+euclidean_int <- dist(swapped_int_mat_fil, method='euclidean')
+
+euclidean_growth <- dist(growth_mat, method='euclidean')
+
+```
+
+4) Directly compare the SLA1 PPI and growth dendrograms:
+
+```{r}
+
+remove.packages('dendextend')
+detach("package:dendextend", unload=TRUE)
+devtools::install_github("DBradley27/dendextend")
+library(dendextend)
+
+euclidean_int_mat <- as.matrix(euclidean_int)
+euclidean_growth_mat <- as.matrix(euclidean_growth)
+
+# Shorten row and column labels for both matrices
+
+rownames(euclidean_growth_mat) <- rapply(strsplit(rownames(euclidean_growth_mat), split=' '), function(x) x[2])
+colnames(euclidean_growth_mat) <- rapply(strsplit(colnames(euclidean_growth_mat), split=' '), function(x) x[2])
+rownames(euclidean_int_mat) <- rapply(strsplit(rownames(euclidean_int_mat), split=' '), function(x) x[2])
+colnames(euclidean_int_mat) <- rapply(strsplit(colnames(euclidean_int_mat), split=' '), function(x) x[2])
+
+# Convert distance objects to matrix objects
+
+euclidean_int_mat_dis <- as.dist(euclidean_int_mat)
+euclidean_growth_mat_dis <- as.dist(euclidean_growth_mat)
+
+# Write out the distance matrices to file
+
+write.table(euclidean_int_mat,file='SH3_interactions_Euclidean_sla1_script_new_data.txt',quote=FALSE)
+write.table(euclidean_growth_mat,file='SLA1_growth_Euclidean_new_data.txt',quote=FALSE)
+
+euclidean_int_mat <- read.table('SH3_interactions_Euclidean_sla1_script_new_data.txt')
+euclidean_growth_mat <- read.table('SLA1_growth_Euclidean_new_data.txt')
+
+# Use default heirarchical clustering for PPI and growth data
+
+dend1 <- as.dendrogram(hclust(as.dist(euclidean_int_mat)))
+dend2 <- as.dendrogram(hclust(as.dist(euclidean_growth_mat)))
+
+# Calculate cophenetic correlation between PPI and growth dendrograms
+empirical_score <- cor.dendlist(dendlist(dend1, dend2), method = "cophenetic")[1,2]
+
+pdf('Figs5B_new_data.pdf',9,5.5)
+
+dendlist(dend1, dend2) %>%
+  untangle(method = "step1side") %>% # Find the best alignment layout
+  tanglegram(common_subtrees_color_branches = TRUE,
+             highlight_branches_lwd = TRUE,
+             highlight_distinct_edges = FALSE,
+             common_subtrees_color_lines = TRUE,
+             common_subtrees_color_lines_default_single_leaf_color = colors()[355],
+             lwd = c(2.2),
+             main_left = 'PPIs',
+             cex_main_left = 2.2,
+             main_right = 'Growth',
+             cex_main_right = 2.2,
+             sort=FALSE,
+             edge.lwd = 1.9,
+             columns_width = c(5.2,2.6,5.2),
+             margin_top = 4,
+             margin_inner = 9,
+             axes = FALSE,
+             lab.cex = 1.0,
+             sub = 'Similarity clustering',
+             cex_sub = 1.2)
+
+dev.off()
+
+```
+
+Test the significance of the correlation by calculating the copehentic correlation for permuted data:
+
+```{r}
+
+entanglement_vec <- NULL
+
+for (i in 1:100000) {
+  
+  print(i)
+  
+  # Randomise the assignment of SLA1 interaction profiles to different to different SLA1 labels
+  swapped_int_mat_fil_rand <- swapped_int_mat_fil[sample(1:nrow(swapped_int_mat_fil),nrow(swapped_int_mat_fil),replace=FALSE),]
+  rownames(swapped_int_mat_fil_rand) <- rownames(swapped_int_mat_fil)
+  
+  # Generate Euclidean distance matrix for the randomised interaction profiles
+  manhattan_rand <- dist(swapped_int_mat_fil_rand, method='euclidean')
+  
+  # dendextend
+  
+  manhattan_rand <- as.matrix(manhattan_rand)
+
+  # Convert matrix objects to distance objects
+  
+  manhattan_rand <- as.dist(manhattan_rand)
+  euclidean_growth_mat_dis <- as.dist(euclidean_growth_mat)
+  
+  # Generate dendrograms for the SLA1 PPi data and growth data
+  
+  dend1 <- as.dendrogram(hclust(manhattan_rand))
+  dend2 <- as.dendrogram(hclust(euclidean_growth_mat_dis))
+  
+  # Calculate a cophenetic correlation for the permuted data
+  
+  score <- cor.dendlist(dendlist(dend1, dend2), method = "cophenetic")[1,2] 
+
+  entanglement_vec <- c(entanglement_vec, score)
+  
+}
+
+p-value <- length(which(entanglement_vec > empirical_score))/length(entanglement_vec)
+
+```
+
+
+
