@@ -1,0 +1,175 @@
+---
+title: "SH3_DMS_heatmap"
+author: "David Bradley"
+date: "3/13/2020"
+output: html_document
+---
+
+# Make a violin plot of the different mutations
+
+```{r setup, include=FALSE}
+
+library(ggplot2)
+
+# Read in the DMS table
+SH3_DMS <- read.table('dratio_average.tsv',sep='\t',header=TRUE,stringsAsFactors = FALSE)
+SH3_DMS <- SH3_DMS[,-1]
+
+# Start with LSB3 MTX2
+SH3_DMS <- SH3_DMS[SH3_DMS[,1] == 'ABP1',]
+SH3_DMS_LSB3_MTX2 <- SH3_DMS[SH3_DMS[,2] == 'LSB3_MTX2',]
+
+SH3_DMS_LSB3_MTX2_aa <- SH3_DMS_LSB3_MTX2[SH3_DMS_LSB3_MTX2[,3] == 'amino acid',]
+SH3_DMS_LSB3_MTX2_codon <- SH3_DMS_LSB3_MTX2[SH3_DMS_LSB3_MTX2[,3] == 'codon',]
+
+# Obtain stop codon scores only:
+
+stop_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,5] == '*',6]
+stop_scores_codon <- SH3_DMS_LSB3_MTX2_codon[SH3_DMS_LSB3_MTX2_codon[,5] %in% c('TAA','TAG','TGA'),6]
+
+# Use the codon distribution foing forward
+
+library(Biostrings)
+GENETIC_CODE
+
+syn_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,17] == 'synonymous',6]
+nonsyn_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,17] == 'non-synonymous',6]
+
+ref_codons <- SH3_DMS_LSB3_MTX2_codon[,4]
+ref_codons <- rapply(strsplit(ref_codons,split=' '), function(x) x[2])
+mut_codons <- SH3_DMS_LSB3_MTX2_codon[,5]
+
+codon_mutations <- cbind(ref_codons,mut_codons)
+
+# Determine the class of the codon mutations (syn, non-syn, or stop)
+
+status_vec <- NULL
+
+for (i in 1:nrow(codon_mutations)) {
+  
+  print(i)
+  
+  codon_ref <- unname(codon_mutations[i,1])
+  codon_mut <- unname(codon_mutations[i,2])
+  
+  aa_ref <- unname(GENETIC_CODE[names(GENETIC_CODE) == codon_ref])
+  aa_mut <- unname(GENETIC_CODE[names(GENETIC_CODE) == codon_mut])
+  
+  if (aa_mut == '*') {status_vec <- c(status_vec, 'stop'); next}
+  if (aa_ref == aa_mut) {status_vec <- c(status_vec, 'synonymous')}
+  if (aa_ref != aa_mut) {status_vec <- c(status_vec, 'non-synonymous')}
+  
+}
+
+# Retrieve scores for each class
+
+syn_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'synonymous',6]
+syn_scores_codon <- syn_scores_codon[!is.na(syn_scores_codon)]
+
+non_syn_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'non-synonymous',6]
+non_syn_scores_codon <- non_syn_scores_codon[!is.na(non_syn_scores_codon)]
+
+stop_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'stop',6]
+stop_scores_codon <- stop_scores_codon[!is.na(stop_scores_codon)]
+
+## Generate a violin plot for the data
+
+library(ggplot2)
+library(Hmisc)
+
+scores <- c(stop_scores_codon,non_syn_scores_codon,syn_scores_codon)
+scores_label <- c(rep('Stop',length(stop_scores_codon)),rep('Non-synonymous',length(non_syn_scores_codon)),rep('Synonymous',length(syn_scores_codon)))
+
+scores_codon <- cbind(as.numeric(scores),scores_label)
+scores_codon <- data.frame(scores,scores_label,stringsAsFactors = FALSE)
+colnames(scores_codon) <- c('Scores','Mutation')
+scores_codon$Mutation <- factor(scores_codon$Mutation, levels = c('Stop','Non-synonymous','Synonymous'))
+
+# Scale scores by the median of the synonymous scores
+scores_codon[,1] <- as.numeric(scores_codon[,1])-median(syn_scores_codon)
+scores_codon_lsb3 <- scores_codon
+
+g <- ggplot(scores_codon_lsb3, aes(x = Mutation, y = Scores))
+g <- g + geom_violin(aes(fill=Mutation),trim = FALSE,lwd=0.85,scale='width')+
+  stat_summary(
+    fun.data = "mean_sdl",  fun.args = list(mult = 1), 
+    geom = "pointrange", color = "black"
+    )+scale_fill_manual(values = c(colors()[103], colors()[103], colors()[103]))
+g <- g+theme_bw()
+g <- g+ggtitle('ABP1-LSB3')
+g <- g+theme(plot.title = element_text(hjust = 0.5))
+g <- g+theme(axis.text=element_text(size=13),axis.title=element_text(size=13.5,face="bold"),plot.title=element_text(size=14,face='bold'))
+g <- g+xlab('')
+g <- g+ylab('')
+g <- g+theme(legend.position = "none")
+g <- g + geom_text(data=data.frame(), aes(x=c(1,2,3), y=c(4.725,4.725,4.725), label=c('n=172','n=3,316','n=120')))
+
+ggsave(file='DMS_codon_violin_ABP1_LSB3.pdf', plot=g, width=6.5, height=5.8)
+ggsave(file='DMS_codon_violin_ABP1_LSB3.eps', plot=g, width=6.5, height=5.8)
+
+```
+
+# Make DMS heatmap
+
+```{r}
+
+library(ComplexHeatmap)
+library('RColorBrewer')
+library(circlize)
+
+# Scale DMS scores  by synonymous codon scores
+DMS_scores <- SH3_DMS_LSB3_MTX2_aa[,6] - median(syn_scores_codon)
+# Generate a matrix of the AA DMS scores
+DMS_scores_mat <- matrix(DMS_scores,nrow=21,ncol=58,byrow=FALSE)
+rownames(DMS_scores_mat) <- c('*','A','C','D','E','F','G','H','I','K','L','M','N','P','Q','R','S','T','V','W','Y')
+sequence <- unlist(strsplit(c('PWATAEYDYDAAEDNELTFVENDKIINIEFVDDDWWLGELEKDGSKGLFPSNYVSLGN'),split=''))
+colnames(DMS_scores_mat) <- paste(1:58,sequence)
+
+# Rearrange DMS scores matrix to group chemically similar amino acids
+aa_con_vec <- c(1,7,2,19,11,9,12,3,14,20,6,21,17,18,13,15,8,10,16,4,5)
+
+# Code to mark the synonymous amino acid mutations in each matrix
+syn_dex <- match(sequence,rownames(DMS_scores_mat)[aa_con_vec])
+j_dex <- 1:58
+mat_dex <- lapply(1:58, function(x) c(x,syn_dex[x]))
+
+# SH3 domain residues within 4 Angstroms of the binding peptide (PDB: 2RPN) will be bolded in the heatmap
+# and coloured black
+bold_vec <- rep(1,58)
+bold_vec[c(7,52,53,34,35,32,31,48,13,15,16)] <- 2
+
+col_vec <- rep(colors()[290],58)
+col_vec[c(7,52,53,34,35,32,31,48,13,15,16)] <- colors()[261]
+
+Heatmap(DMS_scores_mat[aa_con_vec,],cluster_columns=FALSE,cluster_rows=FALSE,col=colorRamp2(breaks=seq(-3,3,length.out=7),colors=rev(brewer.pal(n = 7, name = "RdBu"))), 
+        show_column_names=TRUE,
+        row_names_side='left',
+       # heatmap_width=0.5,
+        width=unit(20,'cm'),
+       # heatmap_height=2,
+        height=unit(8.5,'cm'),
+        border=TRUE,
+        row_title='Mutation',
+        row_names_rot=90,
+        row_names_centered=TRUE,
+        row_names_gp=gpar(fontfamily='mono'),
+        column_names_gp=gpar(fontfamily='mono',fontsize=12,col=col_vec,fontface=bold_vec),
+        #rect_gp=(gpar(lwd=0, fontfamily='mono')),
+        cell_fun = function(j, i, x, y, w, h, col) { # add text to each grid
+          if (list(c(j,i)) %in% mat_dex){
+        grid.text('s', x, y)
+          }      
+    },
+   heatmap_legend_param = list(
+    at = c(-3, 0, 3),
+    #labels = c("low", "zero", "high"),
+    title = "",
+    legend_height = unit(3.5, "cm"),
+    legend_width = unit(2, "cm"),
+    border='black',
+    lwd=1.7
+   # title_position = "leftcenter-rot"
+))
+
+```
+
