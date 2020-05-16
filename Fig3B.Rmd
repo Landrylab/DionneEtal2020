@@ -1,0 +1,208 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Cluster the SH3 domain sequences, and then to compare the pattern of clustering with that of the SH3 interaction profile. 
+
+Generate a matrix of SH3 interaction scores. 
+
+```{r}
+
+library(tidyverse)
+
+# Read in the PCA data for the ABP1 swapped experiment
+sh3_pca_swapped <- read_csv('PCAOct18ABP1SWAPInt_0120Analysis.csv')
+
+# Take the data  frame given and convert the data in the form of a matrix where
+# the number of rows is equal to the number of different SH3s, and the number of columns
+# is equal to the number of different interactors. Therefore:
+
+sh3_swapped <- unique(unlist(sh3_pca_swapped[,1]))
+interactors_swapped <-  unique(unname(unlist(sh3_pca_swapped[,2]))) 
+  
+rows <- length(sh3_swapped)
+cols <- length(interactors_swapped)
+
+# Initialise matrix:
+swapped_int_mat <- matrix(0,nrow=rows,ncol=cols)
+rownames(swapped_int_mat) <- sh3_swapped
+colnames(swapped_int_mat) <- interactors_swapped
+
+# Assign correct matrix values
+
+for (i in 1:length(sh3_swapped)) {
+  for (j in 1:length(interactors_swapped)) {
+  
+    sh3_name <- sh3_swapped[i]
+    int_name <- interactors_swapped[j]
+  
+    int_record <- sh3_pca_swapped[sh3_pca_swapped[,1] == sh3_name & sh3_pca_swapped[,2] == int_name,] 
+    int_score <- unlist(unname(int_record[,5]))
+    
+    # If no record is found for a bait-prey pair, set interaction score to 
+    # minimum across the whole dataset
+    
+    if(length(int_score) == 0) {int_score <- 0}
+    
+    swapped_int_mat[i,j] <- int_score
+    
+  }
+}
+
+```
+
+Generate a distance matrix between the interaction profiles of different SH3 domains, and then perform
+hierarchical clustering
+
+```{r}
+
+swapped_int_mat_fil <- swapped_int_mat 
+
+# Delete 'WT ABP1' and 'ABP1 stuffed' records, which are irrelevant for this analysis 
+
+swapped_int_mat_fil <- swapped_int_mat_fil[-which(rownames(swapped_int_mat_fil) == 'ABP1 Stuffed'),]
+swapped_int_mat_fil <- swapped_int_mat_fil[-which(rownames(swapped_int_mat_fil) == 'ABP1'),]
+
+# Generate the Euclidean distance matrix for the PPI profiles:
+
+euclidean <- dist(swapped_int_mat_fil, method='euclidean')
+
+```
+
+Generate a distance matrix for the SH3 domain sequences:
+
+```{r}
+
+library(readxl)
+library(seqinr)
+detach("package:seqinr", unload=TRUE)
+library(bio3d)
+
+# Read in the SH3 domain alignment    
+sh3_al <- read.fasta('bait_sh3_domain_aa_yeast_human_linsi.fasta')
+
+#bio3d method for similarity calculation
+sh3_dist_matrix <- seqidentity(sh3_al,similarity=TRUE,normalize=TRUE)
+#similarities to distances
+sh3_dist_matrix <- 1-sh3_dist_matrix
+
+rownames(sh3_dist_matrix) <- toupper(rownames(sh3_dist_matrix))
+colnames(sh3_dist_matrix) <- toupper(colnames(sh3_dist_matrix))
+
+# Match row and column names between sequence matrix and PPI matrix
+sh3_dist_matrix <- sh3_dist_matrix[match(rapply(strsplit(rownames(as.matrix(euclidean)),split=' '), function(x) x[1]),rownames(sh3_dist_matrix)),match(rapply(strsplit(rownames(as.matrix(euclidean)),split=' '), function(x) x[1]),rownames(sh3_dist_matrix))]
+
+# Matrix class -> dist class                                   
+sh3_dist_matrix <- as.dist(sh3_dist_matrix)
+
+```
+
+Directly compare the two dendrograms:
+
+```{r}
+
+# Use the dendextend package for this purpose
+
+remove.packages('dendextend')
+detach("package:dendextend", unload=TRUE)
+devtools::install_github("DBradley27/dendextend")
+library(dendextend)
+
+# Standardise labels between the two matrices (they have to be exactly the same)
+manhattan_bin <- as.matrix(euclidean)
+sh3_dist_matrix <- as.matrix(sh3_dist_matrix)
+
+rownames(manhattan_bin) <- rownames(sh3_dist_matrix)
+colnames(manhattan_bin) <- colnames(sh3_dist_matrix)
+
+# Convert matrix objects to distance objects
+manhattan_bin <- as.dist(manhattan_bin)
+sh3_dist_matrix <- as.dist(sh3_dist_matrix)
+
+dend1 <- as.dendrogram(hclust(manhattan_bin))
+dend2 <- as.dendrogram(hclust(sh3_dist_matrix))
+
+# Empirical cophenetic correlation between the two matrices (PPI and SH3 domain)
+
+empirical_score <- cor.dendlist(dendlist(dend1, dend2), method = "cophenetic")[1,2]
+
+# Plot out the 'tangelgram'
+
+pdf('Fig3C.pdf',9,5.5)
+
+dendlist(dend1, dend2) %>%
+  untangle(method = "step1side") %>% # Find the best alignment layout
+  tanglegram(common_subtrees_color_branches = TRUE,
+             highlight_branches_lwd = TRUE,
+             highlight_distinct_edges = FALSE,
+             common_subtrees_color_lines = TRUE,
+             common_subtrees_color_lines_default_single_leaf_color = colors()[355],
+             lwd = c(2.2),
+             main_left = 'Interactions',
+             cex_main_left = 2.1,
+             main_right = 'Sequences',
+             cex_main_right = 2.1,
+             sort=FALSE,
+             edge.lwd = 1.9,
+             columns_width = c(5,3,5),
+             margin_top = 4,
+             margin_inner = 5,
+             axes = FALSE, 
+             lab.cex = 1.3,
+             sub = 'Similarity clustering',
+             cex_sub = 1.2)
+
+dev.off()
+
+```
+
+Calculate the cophenetic correlation for permuted data in which SH3 domain labels
+have been randomly assigned to each interaction profile
+
+```{r}
+
+# Randomisations
+
+entanglement_vec <- NULL
+
+for (i in 1:10000) {
+  
+  print(i)
+  
+  # Randomise assignment of different SH3 PPI profiles to different SH3 domain labels
+  swapped_int_mat_fil_rand <- swapped_int_mat_fil[sample(1:nrow(swapped_int_mat_fil),nrow(swapped_int_mat_fil),replace=FALSE),]
+  rownames(swapped_int_mat_fil_rand) <- rownames(swapped_int_mat_fil)
+  
+  # Calculate Euclidean distance matrix
+  manhattan_rand <- dist(swapped_int_mat_fil_rand, method='euclidean')
+  
+  manhattan_rand <- as.matrix(manhattan_rand)
+  sh3_dist_matrix <- as.matrix(sh3_dist_matrix)
+  
+  # Make row names and column names consistent between the two matrices
+  rownames(manhattan_rand) <- rownames(sh3_dist_matrix)
+  colnames(manhattan_rand) <- colnames(sh3_dist_matrix)
+  
+  # Convert matrix object to distance object
+  manhattan_rand <- as.dist(manhattan_rand)
+  sh3_dist_matrix <- as.dist(sh3_dist_matrix)
+  
+  # Generate dendrograms
+  dend1 <- as.dendrogram(hclust(manhattan_rand))
+  dend2 <- as.dendrogram(hclust(sh3_dist_matrix))
+  
+  # Calculate copehentic correlation for the randomised data
+  score <- cor.dendlist(dendlist(dend1, dend2), method = "cophenetic")[1,2] 
+
+  entanglement_vec <- c(entanglement_vec, score)
+  
+}
+
+# p-value from permutation
+p_value <- length(which(entanglement_vec > empirical_score))/length(entanglement_vec)
+
+```
+
+
+
