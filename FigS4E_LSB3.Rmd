@@ -1,0 +1,208 @@
+---
+title: "SH3_DMS"
+author: "David Bradley"
+date: "3/3/2020"
+output: html_document
+---
+
+# Load in the DMS data
+
+```{r setup, include=FALSE}
+
+library(ggplot2)
+
+# Read in the DMS table
+SH3_DMS <- read.table('dratio_average.tsv',sep='\t',header=TRUE,stringsAsFactors = FALSE)
+SH3_DMS <- SH3_DMS[,-1]
+
+# Start with LSB3 MTZ2
+SH3_DMS <- SH3_DMS[SH3_DMS[,1] == 'ABP1',]
+SH3_DMS_LSB3_MTX2 <- SH3_DMS[SH3_DMS[,2] == 'LSB3_MTX2',]
+
+# Amino acid and codon scores
+SH3_DMS_LSB3_MTX2_aa <- SH3_DMS_LSB3_MTX2[SH3_DMS_LSB3_MTX2[,3] == 'amino acid',]
+SH3_DMS_LSB3_MTX2_codon <- SH3_DMS_LSB3_MTX2[SH3_DMS_LSB3_MTX2[,3] == 'codon',]
+
+# Obtain stop codon scores only:
+
+stop_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,5] == '*',6]
+stop_scores_codon <- SH3_DMS_LSB3_MTX2_codon[SH3_DMS_LSB3_MTX2_codon[,5] %in% c('TAA','TAG','TGA'),6]
+
+# Use the codon distribution going forward
+
+library(Biostrings)
+GENETIC_CODE
+
+syn_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,17] == 'synonymous',6]
+nonsyn_scores_aa <- SH3_DMS_LSB3_MTX2_aa[SH3_DMS_LSB3_MTX2_aa[,17] == 'non-synonymous',6]
+
+ref_codons <- SH3_DMS_LSB3_MTX2_codon[,4]
+ref_codons <- rapply(strsplit(ref_codons,split=' '), function(x) x[2])
+mut_codons <- SH3_DMS_LSB3_MTX2_codon[,5]
+
+codon_mutations <- cbind(ref_codons,mut_codons)
+
+# Determine the class of the codon mutations (syn, non-syn, or stop)
+
+status_vec <- NULL
+
+for (i in 1:nrow(codon_mutations)) {
+  
+  print(i)
+  
+  codon_ref <- unname(codon_mutations[i,1])
+  codon_mut <- unname(codon_mutations[i,2])
+  
+  aa_ref <- unname(GENETIC_CODE[names(GENETIC_CODE) == codon_ref])
+  aa_mut <- unname(GENETIC_CODE[names(GENETIC_CODE) == codon_mut])
+  
+  if (aa_mut == '*') {status_vec <- c(status_vec, 'stop'); next}
+  if (aa_ref == aa_mut) {status_vec <- c(status_vec, 'synonymous')}
+  if (aa_ref != aa_mut) {status_vec <- c(status_vec, 'non-synonymous')}
+  
+}
+
+# Retrieve scores for each class
+
+syn_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'synonymous',6]
+syn_scores_codon <- syn_scores_codon[!is.na(syn_scores_codon)]
+
+non_syn_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'non-synonymous',6]
+non_syn_scores_codon <- non_syn_scores_codon[!is.na(non_syn_scores_codon)]
+
+stop_scores_codon <- SH3_DMS_LSB3_MTX2_codon[status_vec == 'stop',6]
+stop_scores_codon <- stop_scores_codon[!is.na(stop_scores_codon)]
+
+```
+
+# Find the median DMS score for each position
+
+```{r}
+
+# Scale by the median of the synonymous codon substitutions
+
+SH3_DMS_LSB3_MTX2_aa[,6] <- SH3_DMS_LSB3_MTX2_aa[,6] - median(syn_scores_codon)
+
+# Take the median log2ratio score for each position
+
+span_number <- unique(rapply(strsplit(SH3_DMS_LSB3_MTX2[,4],split=' '),function(x) x[1]))
+
+median_vec <- NULL
+ref_vec <- NULL
+
+for (i in 1:length(span_number)) {
+  
+  # DMS data per position
+  SH3_DMS_LSB3_MTX2_pos <- SH3_DMS_LSB3_MTX2_aa[grep(span_number[i],SH3_DMS_LSB3_MTX2_aa[,4]),]
+  
+  # WT amino acid
+  SH3_DMS_LSB3_MTX2_ref <- unique(rapply(strsplit(SH3_DMS_LSB3_MTX2_aa[grep(span_number[i],SH3_DMS_LSB3_MTX2_aa[,4]),4],split=' '),function(x) x[2]))
+  
+  # Exclude stop codon
+  SH3_DMS_LSB3_MTX2_pos <- SH3_DMS_LSB3_MTX2_pos[-1,]
+  
+  # Find the median amino acid score
+  SH3_DMS_LSB3_MTX2_pos_ratio_median <- median(SH3_DMS_LSB3_MTX2_pos[,6],na.rm=TRUE)
+  
+  median_vec <- c(median_vec, SH3_DMS_LSB3_MTX2_pos_ratio_median)
+  ref_vec <- c(ref_vec, SH3_DMS_LSB3_MTX2_ref)
+   
+}
+
+# PDB: 2RPN contains an alanine as the first residue but this is missing from the DMS sequence.
+# Here we add in a 0 score to represent it
+
+median_vec <- c(0,median_vec)
+names(median_vec) <- c('A',ref_vec)
+
+```
+
+# Calculate the RSA (relative solvent accessibility) for each position from PDB-2RPN:
+
+```{r}
+
+library(stringr)
+
+# Read in the raw file from DSSP
+abp1_dssp <- readLines('2rpn_ACC.dssp')
+
+#SH3 domain only
+abp1_dssp_chainA <- abp1_dssp[grep('  A  ',abp1_dssp)]
+
+# Remove excess white space
+
+abp1_dssp_chainA <- str_replace(gsub("\\s+", " ", str_trim(abp1_dssp_chainA)), "B", "b")
+grep_dex <- rapply(lapply(strsplit(abp1_dssp_chainA,split=' '),function(x) grep(',',x)), function(x) x[1])
+abp1_dssp_chainA_list <- strsplit(abp1_dssp_chainA,split=' ')
+
+# Calculate absolute accessibilities for each position
+
+acc_vec <- NULL
+
+for (i in 1:length(abp1_dssp_chainA_list)) {
+  
+  acc <- abp1_dssp_chainA_list[[i]][grep_dex[i]-1]
+  acc_vec <- c(acc_vec, as.numeric(acc))
+  
+}
+
+# SH3 DMS WT sequence
+aa_vec <- unlist(strsplit('APWATAEYDYDAAEDNELTFVENDKIINIEFVDDDWWLGELEKDGSKGLFPSNYVSLGN',split=''))
+
+# Maximum surface areas for each amino acid from PMID: 24278298
+max_asa <- c(121,265,187,187,148,214,214,97,216,195,191,230,203,228,154,143,163,264,255,165)
+AAs <- c('A','R','N','D','C','E','Q','G','H','I','L','K','M','F','P','S','T','W','Y','V')
+names(max_asa) <- AAs
+
+#Calculate RSAs per SH3 domain position:
+
+rsa_vec <- NULL
+
+for (i in 1:length(acc_vec)) {
+  
+  acc <- acc_vec[i]
+  aa <- aa_vec[i]
+  
+  max_acc <- unname(max_asa[names(max_asa) %in% aa])
+  rsa <- acc / max_acc
+  rsa_vec <- c(rsa_vec,rsa)
+  
+}
+
+names(rsa_vec) <- aa_vec  
+
+# Plot the RSA values against the median DMS
+
+rsa_lm <- rsa_vec[2:length(rsa_vec)]
+dms_lm <- median_vec[2:length(median_vec)]
+comb_lm <- cbind(rsa_lm,dms_lm)
+colnames(comb_lm) <- c('RSA','DMS')
+lm(RSA~DMS,as.data.frame(comb_lm))
+cor(rsa_vec[2:length(rsa_vec)],median_vec[2:length(median_vec)])
+
+## Scatter plot for RSA vs. median DMS
+
+library(ggplot2)
+
+ggplot_df <- as.data.frame(cbind(rsa_vec[2:length(rsa_vec)],median_vec[2:length(median_vec)]),stringsAsFactors = FALSE)
+colnames(ggplot_df) <- c('RSA','DMS')
+rownames(ggplot_df) <- 1:58
+
+ggplot_df[,1] <- as.numeric(ggplot_df[,1])
+ggplot_df[,2] <- as.numeric(ggplot_df[,2])
+
+g <- ggplot(ggplot_df, aes(x=as.numeric(ggplot_df[,1]), y=as.numeric(ggplot_df[,2]))) + geom_point(size=1, shape=23)
+g <- g+ theme_bw()
+g <- g + xlab('Relative solvent accessibility')
+g <- g + ylab('Median DMS')
+g <- g+theme(axis.text=element_text(size=13),axis.title=element_text(size=13,face="bold"),plot.title=element_text(size=14,face='bold'))
+g <- g+xlim(0,max(ggplot_df[,1]))
+g <- g+geom_point(size=3, colour="black",pch=21, fill='black')
+g <- g+geom_text(aes(x=0.55,y=0.99),label='r = 0.62, p<<0.01',size=4.4, check_overlap = TRUE)
+g <- g+geom_smooth(method=lm,fullrange=FALSE)
+
+ggsave(file='sh3_rsa_dms_lsb3_scatter.pdf', plot=g, width=5.8, height=4.8)
+
+```
+
+
