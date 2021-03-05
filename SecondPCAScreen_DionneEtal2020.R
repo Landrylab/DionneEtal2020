@@ -154,7 +154,7 @@ pdf("HeatmapSLA1Allinteractions_0120Analysis.pdf",12, 12)
 heatmap.2(heatmap,dendrogram = "row",cexRow = 0.7, cexCol = 0.4,col=mycol, scale ="none", trace = "none", density.info = "none",margins = c(5,20))
 dev.off()
 
-# Heatmap Abp1 SH3 in Sla1, Figure 3D
+# Heatmap Abp1 SH3 in Sla1, Figure 2E
 
 SLA1ABP1Stuffed = subset(PCA19SLA1MedOKRepCombinedINTFInal, DHFR1.2 %in% c("SLA1 WT|WT|WT","SLA1 ABP1|WT|WT","SLA1 WT|ABP1|WT","SLA1 WT|WT|ABP1"))
 Baits =as.list(unique(SLA1ABP1Stuffed$DHFR1.2))
