@@ -81,7 +81,7 @@ hygro2$strain <- (as.character(hygro2$strain))
 hygro2$origin_SH3 <- (as.character(hygro2$origin_SH3))
 
 
-# Boxplot corresponding to Figure S3F. The figure was also edited in illustrator.
+# Boxplot corresponding to Figure S2E. The figure was also edited in illustrator.
 
 pdf("BoxPlotAbp1SwapHygro_CRLCode_0320.pdf",7, 10)
 ggplot(hygro2, aes(x=reorder(strain, 1-sim_mod, fun = median),y=aucexp, fill=origin_SH3)) +
