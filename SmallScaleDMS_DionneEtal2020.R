@@ -59,7 +59,7 @@ dms %<>% mutate(id_strain = paste(wtaa,pos,mutated, sep=""))
 
 com<- left_join(growth_ave,dms, by=c("strain"="id_strain"))
 
-# Figure S4D. The figure was also edited in illustrator.
+# Figure S3F. The figure was also edited in illustrator.
 
 ref_wt <- com$ave_au[com$strain=="WT"]
 ref_del <- com$ave_au[com$strain=="stuffed"]
