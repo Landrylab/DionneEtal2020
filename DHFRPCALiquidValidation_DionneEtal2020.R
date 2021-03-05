@@ -113,7 +113,7 @@ WTVsStuffedAnnotated = rbind(Gained, Lost)
 write.csv(WTVsStuffedAnnotated,"PCAliquidValidation_WTvsStuffedAnn_0220Analysis.csv")
 # This corresponds to the analyzed dataset available with the article. Some colunm names and some bait names have been edited manually for the paper.
 
-## Figure S2C.
+## Figure S1D.
 #boxplot with last timepoint OD.
 
 PCAliquidValid = read.csv("PCAliquidValidation_WTvsStuffedAnn_0220Analysis.csv")
@@ -129,7 +129,7 @@ UniqueGained = subset(PCAliquidValid,PCAliquidValid$InteractionType == "gained")
 UniqueLost = subset(PCAliquidValid,PCAliquidValid$InteractionType == "Lost")
 
 
-## Figure S2D
+## Figure S1E
 #Growth curves of Pbs2/YJL128C interaction. 
 
 Pbs2Data = AllDataFinal[grep("YJL128C",AllDataFinal$Prey),]
