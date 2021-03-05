@@ -345,7 +345,7 @@ ggplot(mSH3_ko_d_scores, aes(x=reorder(orf, desc(rank),fun=median), y=rel_to_wt,
 
 dev.off()
 
-# Make figure (Figure 2D-E) with both Boxplots. For Fig 2D, HOF1 is removed because the KO strain has almost no growth.The figure was also edited in illustrator.
+# Make figure (Figure 1E-F) with both Boxplots. For Fig 1E, HOF1 is removed because the KO strain has almost no growth. The figure was also edited in illustrator.
 
 f2d <- diff_with_WT %>% filter(!is.na(diff),gene_tagged !="HOF1")%>%
   ggplot(., aes(x=reorder(gene_tagged, diff,fun=median), y=diff, fill=type_diff)) +
@@ -381,7 +381,5 @@ plot_grid(f2d, f2e, labels = c('D', 'E'),
           align = 'v')
 dev.off()                              
 
-# The analyzed datasets that are available with the article correspond to f2d and this one:
-mSH3 = mSH3_ko_d_scores %>%  select(orf, gene_tagged, Condition, type_construct, rel_to_wt)
-write.csv(mSH3,"GrowthMultipleSH3Analyzed_0420.csv")
+# The analyzed datasets are available with the article.
 # Some column names and strain names have been manually changed for the paper.
