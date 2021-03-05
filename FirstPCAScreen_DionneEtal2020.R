@@ -277,7 +277,7 @@ AllSH3Interactions = rbind(SH3depInteractions,SH3IndepInteractions)
 write.csv(AllSH3Interactions,"PCAOct18_AllSH3interactions_0120Analysis.csv")
 # This corresponds to the analyzed dataset available with the article. Some colunm names and some bait names have been edited manually for the paper.
 
-## Heatmap generation for Figure 2A.
+## Heatmap generation for Figure 1B.
 
 AllSH3Interactions = read.csv("PCAOct18_AllSH3interactions_0120Analysis.csv", header =T)
 AllSH3Interactions$DHFR1.2 <- (as.character(AllSH3Interactions$DHFR1.2))
@@ -354,7 +354,7 @@ dev.off()
 ABP1Swap=AlldataNormRepCombINT[grep("ABP1", AlldataNormRepCombINT$DHFR1.2),]
 write.csv(ABP1Swap,"PCAOct18ABP1SWAPInt_0120Analysis.csv")
 
-# Heatmap generation for Figure 3A.
+# Heatmap generation for Figure 2B.
 # Remove the in Abp1 nomenclature.
 
 Abp1Swap = read.csv("PCAOct18ABP1SWAPInt_0120Analysis.csv")
