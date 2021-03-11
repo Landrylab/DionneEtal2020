@@ -10,7 +10,7 @@ import seaborn as sns
 sns.set(style="white")
 
 
-## LOAD AND MERGE DATA FROM ANALYSED FOLDERS
+## LOAD AND MERGE DATA FROM ANALYZED FOLDERS
 
 raw_trajectories = pd.DataFrame()
 cellprops = pd.DataFrame()
@@ -301,14 +301,14 @@ lastframe.to_csv('SLA1GFPlastframe.csv')
 counts.to_csv('SLA1GFPcounts.csv')
 
 
-## STACKED PLOTS COMPLETE VS INCOMPLETE TRAJECTORIES PER STRAIN
+## STACKED PLOTS COMPLETE VS INCOMPLETE TRAJECTORIES PER STRAIN (Figures 4H and S5G)
 
-# save csv for TableS5
+# save csv
 stacked = counts.loc[:, ['comp/cell', 'incomp/cell']]
 stacked.rename(columns={'comp/cell':'complete', 'incomp/cell':'incomplete'}, inplace=True)
 stacked.to_csv('SLA1GFPCompleteAndIncomplete.csv')
 
-# stuffed strains
+# stuffed strains (Figure S5G)
 stuffed = ['1|2|3', 'D|2|3', '1|D|3', '1|2|D', 'D|D|D']
 ind = np.arange(5)
 sub = stacked.loc[stuffed, :]
@@ -322,7 +322,7 @@ plt.legend(loc="upper right")
 
 fig.savefig('plots/nTrajectories-stuffed.svg', bbox_inches='tight')
 
-# shuffles
+# shuffles (Figure 4H)
 shuffles = ['1|2|3', 'D|D|D', '2|1|3', '1|3|2', '3|2|1', '2|3|1', '3|1|2']
 ind = np.arange(7)
 sub = stacked.loc[shuffles, :]
@@ -369,12 +369,12 @@ sns.violinplot(y='strain', x='linearity', data=lastframe, ax=ax[1,2], order=orde
 
 plt.show()
 
-# save csv for DataS5 and boxplots Figure S5F and S5G
+# save csv for boxplots (Figures S5H and S5I)
 df_boxplots = lastframe[['strain','lifetime', 'linearity']]
 df_boxplots.to_csv('SLA1GFPLifetimeAndLinearity.csv')
 
 
-## PLOT MOVEMENTS TOWARDS CENTROID OVER TIME
+## PLOT MOVEMENTS TOWARDS CENTROID OVER TIME (Figures 4G and S5F)
 
 # calculate effective distance towards centroid
 complete_trajectories.reset_index(inplace=True)
@@ -390,11 +390,11 @@ df_lineplots = complete_trajectories.reset_index().groupby(['strain', 'time'])['
                                                   .agg(['mean', 'count'])
 df_lineplots.reset_index(inplace=True)
 
-# save csv for DataS5
+# save csv
 df_lineplots.rename(columns={'mean':'mean effective distance towards centroid', 'count':'n'}, inplace=True)
 df_lineplots.to_csv(f'SLA1GFPDistances.csv')
 
-# plot stuffed strains
+# plot stuffed strains (Figure S5F)
 fig, ax = plt.subplots(1, 1, squeeze=False, figsize=(7, 5))
 plt.axis([0, 120, -50, 100])
 ax[0, 0].set_xlabel('Time (sec)')
@@ -453,7 +453,7 @@ plt.legend(handles=patches, bbox_to_anchor=(1.45, 1))
 
 fig.savefig(f'plots/Distances-stuffed.svg', bbox_inches='tight')
 
-# plot shuffles
+# plot shuffles (Figure 4G)
 fig, ax = plt.subplots(1, 1, squeeze=False, figsize=(7, 5))
 plt.axis([0, 120, -50, 100])
 ax[0, 0].set_xlabel('Time (sec)')
@@ -515,7 +515,7 @@ plt.legend(handles=patches, bbox_to_anchor=(1.45, 1))
 fig.savefig(f'plots/Distances-shuffles.svg', bbox_inches='tight')
 
 
-## PLOT EXAMPLES OF TRAJECTORIES IN CELLS
+## PLOT EXAMPLES OF TRAJECTORIES IN CELLS (Figure S5E)
 
 # make function to plot the trajectories of the particles for a single cell
 def plot_trajectories(ID, cell):
@@ -555,6 +555,6 @@ def plot_trajectories(ID, cell):
 
     fig.savefig(f'plots/Trajectories-{ID}_c{cell}.svg', bbox_inches='tight')
 
-# plot trajectories over time for Figure S5C
+# plot trajectories over time (Figure S5E)
 complete_trajectories.reset_index(inplace=True)
 plot_trajectories('WTWTWT_1211_006', 10)
